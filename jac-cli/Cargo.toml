@@ -1,0 +1,22 @@
+[package]
+name = "jac-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "JAC CLI - Command-line tool for pack, unpack, ls, and cat operations"
+[[bin]]
+name = "jac"
+path = "src/main.rs"
+
+[dependencies]
+jac-format = { path = "../jac-format" }
+jac-codec = { path = "../jac-codec" }
+jac-io = { path = "../jac-io" }
+clap.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true

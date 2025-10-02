@@ -1,0 +1,19 @@
+[package]
+name = "jac-format"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "JAC format primitives - Core encoding/decoding utilities with no I/O dependencies"
+
+[dependencies]
+thiserror.workspace = true
+smallvec.workspace = true
+bitvec.workspace = true
+crc32c.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+

@@ -1,0 +1,24 @@
+[package]
+name = "jac-io"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "JAC I/O - Streaming file I/O, high-level APIs for compression/decompression"
+
+[dependencies]
+jac-format = { path = "../jac-format" }
+jac-codec = { path = "../jac-codec" }
+serde.workspace = true
+serde_json.workspace = true
+simd-json.workspace = true
+zstd.workspace = true
+rayon.workspace = true
+bytes.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+

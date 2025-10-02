@@ -1,0 +1,66 @@
+[workspace]
+members = [
+    "jac-format",
+    "jac-codec",
+    "jac-io",
+    "jac-cli"
+]
+
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+authors = ["JAC Contributors"]
+license = "Apache-2.0"
+repository = "https://github.com/jac-rs/jac"
+description = "JSON-Aware Compression - A binary container and encoding format for JSON designed for archival workloads"
+keywords = ["json", "compression", "columnar", "archival", "zstd"]
+categories = ["compression", "data-structures", "encoding"]
+
+[workspace.dependencies]
+# Core dependencies
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+zstd = "0.13"
+crc32c = "0.6"
+bitvec = "1.0"
+ahash = "0.8"
+rayon = "1.8"
+bytes = "1.5"
+smallvec = "1.11"
+thiserror = "1.0"
+clap = { version = "4.4", features = ["derive"] }
+
+# Optional dependencies
+simd-json = "0.13"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+env_logger = "0.10"
+
+# Dev dependencies
+criterion = "0.5"
+proptest = "1.4"
+cargo-fuzz = "0.12"
+
+[workspace.patch.crates-io]
+# Pin versions for reproducible builds if needed
+
+[profile.dev]
+opt-level = 0
+debug = true
+overflow-checks = true
+
+[profile.release]
+opt-level = 3
+debug = false
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[profile.bench]
+opt-level = 3
+debug = false
+lto = true
+codegen-units = 1

@@ -1,0 +1,22 @@
+[package]
+name = "jac-codec"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "JAC codec - Encoder/decoder engines for block building and columnarization"
+
+[dependencies]
+jac-format = { path = "../jac-format" }
+serde.workspace = true
+serde_json.workspace = true
+zstd.workspace = true
+ahash.workspace = true
+smallvec.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+
