@@ -81,6 +81,19 @@ This document tracks implementation status of JAC v1 Draft 0.9.1 specification r
 | Field projection verification | §12.1 | jac-codec/src/block_decode.rs, jac-io/tests/integration_tests.rs | block_decode + jac-io integration tests | ✅ |
 | Round-trip semantic equality | §12.1 | jac-codec/src/block_decode.rs, jac-io/tests/integration_tests.rs | block_decode roundtrip tests; jac-io integration | ✅ |
 
+## High-Level APIs (Phase 7)
+
+| Requirement | Spec Ref | Implementation | Test | Status |
+|-------------|----------|----------------|------|--------|
+| Request-based API design | Phase 7 | jac-io/src/lib.rs | jac-io lib.rs tests | ✅ |
+| Input/Output source enums | Phase 7 | jac-io/src/lib.rs | jac-io lib.rs tests | ✅ |
+| Writer metrics and helpers | Phase 7 | jac-io/src/writer.rs | jac-io writer.rs tests | ✅ |
+| Reader & projection iterators | Phase 7 | jac-io/src/reader.rs | jac-io reader.rs tests | ✅ |
+| CLI pack/unpack commands | Phase 7 | jac-cli/src/main.rs | jac-cli main.rs tests | ✅ |
+| Async facade (feature-gated) | Phase 7 | jac-io/src/lib.rs | jac-io async tests | ✅ |
+| Backward compatibility | Phase 7 | jac-io/src/lib.rs | jac-io lib.rs tests | ✅ |
+| Progress reporting | Phase 7 | jac-io/src/lib.rs | jac-io lib.rs tests | ✅ |
+
 ## Implementation Notes
 
 ### Phase 0 (Project Setup) - ✅ Complete
@@ -119,12 +132,15 @@ This document tracks implementation status of JAC v1 Draft 0.9.1 specification r
 - [x] Writer
 - [x] Reader
 
-### Phase 7 (High-Level API) - ❌ Not Started
-- [ ] High-level functions
-- [ ] Concurrency support
+### Phase 7 (High-Level API) - ✅ Complete
+- [x] High-level functions (request-based APIs)
+- [x] Concurrency support (async facade)
+- [x] Writer/reader enhancements
+- [x] Progress reporting and metrics
 
-### Phase 8 (CLI Tool) - ❌ Not Started
-- [ ] CLI commands (pack, unpack, ls, cat)
+### Phase 8 (CLI Tool) - 🚧 In Progress
+- [x] CLI commands (pack, unpack)
+- [ ] CLI commands (ls, cat)
 
 ### Phase 9 (Testing & Validation) - ❌ Not Started
 - [ ] Conformance tests

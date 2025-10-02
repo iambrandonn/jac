@@ -12,6 +12,7 @@ pub struct JacWriter<W: Write> {
     block_index: Vec<BlockIndexEntry>,
     current_offset: u64,
     finished: bool,
+    metrics: WriterMetrics,
 }
 
 impl<W: Write> JacWriter<W> {
@@ -23,6 +24,11 @@ impl<W: Write> JacWriter<W> {
 
         let block_builder = BlockBuilder::new(opts.clone());
 
+        let metrics = WriterMetrics {
+            bytes_written: header_bytes.len() as u64,
+            ..WriterMetrics::default()
+        };
+
         Ok(Self {
             writer: Some(writer),
             opts,
@@ -30,6 +36,7 @@ impl<W: Write> JacWriter<W> {
             block_index: Vec::new(),
             current_offset: header_bytes.len() as u64,
             finished: false,
+            metrics,
         })
     }
 
@@ -40,7 +47,20 @@ impl<W: Write> JacWriter<W> {
             self.flush_block()?;
         }
 
-        self.block_builder.add_record(rec.clone())
+        self.block_builder.add_record(rec.clone())?;
+        self.metrics.records_written += 1;
+        Ok(())
+    }
+
+    /// Write multiple records from an iterator.
+    pub fn write_records<I>(&mut self, records: I) -> Result<()>
+    where
+        I: IntoIterator<Item = serde_json::Map<String, serde_json::Value>>,
+    {
+        for record in records {
+            self.write_record(&record)?;
+        }
+        Ok(())
     }
 
     /// Flush current block to output
@@ -67,6 +87,7 @@ impl<W: Write> JacWriter<W> {
             block_size,
             record_count,
         });
+        self.metrics.blocks_written += 1;
 
         // Write block to output
         if let Some(writer) = self.writer.as_mut() {
@@ -79,6 +100,7 @@ impl<W: Write> JacWriter<W> {
 
         // Update current offset
         self.current_offset += block_size as u64;
+        self.metrics.bytes_written += block_size as u64;
 
         Ok(())
     }
@@ -112,8 +134,7 @@ impl<W: Write> JacWriter<W> {
         self.current_offset
     }
 
-    /// Finish writing and optionally write index
-    pub fn finish(mut self, with_index: bool) -> Result<W> {
+    fn finalize(mut self, with_index: bool) -> Result<WriterFinish<W>> {
         // Flush final block
         self.flush_block()?;
 
@@ -133,6 +154,7 @@ impl<W: Write> JacWriter<W> {
                 ));
             }
             self.current_offset += index_bytes.len() as u64;
+            self.metrics.bytes_written += index_bytes.len() as u64;
 
             // Write 8-byte pointer to index (little-endian u64)
             if let Some(writer) = self.writer.as_mut() {
@@ -142,13 +164,42 @@ impl<W: Write> JacWriter<W> {
                     "JacWriter internal writer missing".to_string(),
                 ));
             }
-            self.current_offset += std::mem::size_of::<u64>() as u64;
+            let pointer_len = std::mem::size_of::<u64>() as u64;
+            self.current_offset += pointer_len;
+            self.metrics.bytes_written += pointer_len;
         }
 
         self.finished = true;
-        self.writer
+        let writer = self
+            .writer
             .take()
-            .ok_or_else(|| JacError::Internal("JacWriter internal writer missing".to_string()))
+            .ok_or_else(|| JacError::Internal("JacWriter internal writer missing".to_string()))?;
+
+        Ok(WriterFinish {
+            writer,
+            metrics: self.metrics,
+        })
+    }
+
+    /// Finish writing and optionally write index (legacy API).
+    pub fn finish(self, with_index: bool) -> Result<W> {
+        let finish = self.finalize(with_index)?;
+        Ok(finish.writer)
+    }
+
+    /// Finish writing and emit an index, returning metrics.
+    pub fn finish_with_index(self) -> Result<WriterFinish<W>> {
+        self.finalize(true)
+    }
+
+    /// Finish writing without emitting an index, returning metrics.
+    pub fn finish_without_index(self) -> Result<WriterFinish<W>> {
+        self.finalize(false)
+    }
+
+    /// Snapshot current metrics without consuming the writer.
+    pub fn metrics(&self) -> WriterMetrics {
+        self.metrics
     }
 }
 
@@ -160,4 +211,23 @@ impl<W: Write> Drop for JacWriter<W> {
             eprintln!("Warning: JacWriter dropped without calling finish() - data may be lost");
         }
     }
+}
+
+/// Finalized writer result containing the underlying writer and metrics snapshot.
+pub struct WriterFinish<W> {
+    /// The owned writer returned from `JacWriter::finish_*`.
+    pub writer: W,
+    /// Accumulated metrics describing the write session.
+    pub metrics: WriterMetrics,
+}
+
+/// Metrics emitted by `JacWriter` to aid progress reporting.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct WriterMetrics {
+    /// Total number of records written (including those in final partial blocks).
+    pub records_written: u64,
+    /// Total number of blocks emitted to the stream.
+    pub blocks_written: u64,
+    /// Total bytes written to the underlying writer, including index data.
+    pub bytes_written: u64,
 }

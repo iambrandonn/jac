@@ -10,6 +10,7 @@ use jac_format::varint::decode_uleb128;
 use jac_format::{
     BlockHeader, BlockIndexEntry, FieldDirectoryEntry, FileHeader, IndexFooter, JacError, Result,
 };
+use serde_json::{Map, Value};
 
 /// Streaming reader for JAC containers with optional index support
 pub struct JacReader<R: Read + Seek> {
@@ -65,6 +66,32 @@ impl<R: Read + Seek> JacReader<R> {
     /// Iterate over blocks in the file
     pub fn blocks(&mut self) -> BlockIterator<'_, R> {
         BlockIterator::new(self)
+    }
+
+    /// Stream all records lazily across the file.
+    pub fn record_stream(&mut self) -> Result<RecordStream<'_, R>> {
+        RecordStream::new(self)
+    }
+
+    /// Stream projected values for the supplied field.
+    pub fn projection_stream(&mut self, field: String) -> Result<ProjectionStream<'_, R>> {
+        ProjectionStream::new(self, field)
+    }
+
+    /// Restart projection/record iteration from the first block.
+    pub fn restart_projection(&mut self) -> Result<()> {
+        self.rewind()
+    }
+
+    /// Rewind the underlying reader to the first block boundary.
+    pub fn rewind(&mut self) -> Result<()> {
+        self.reader.seek(SeekFrom::Start(self.data_start))?;
+        Ok(())
+    }
+
+    /// Consume the reader and return the underlying stream.
+    pub fn into_inner(self) -> R {
+        self.reader
     }
 
     /// Read the entire block payload into memory
@@ -311,10 +338,53 @@ impl<R: Read + Seek> JacReader<R> {
 /// Iterator over blocks in the file
 pub struct BlockIterator<'a, R: Read + Seek> {
     reader: &'a mut JacReader<R>,
-    mode: BlockIterMode,
+    cursor: BlockCursor,
 }
 
-enum BlockIterMode {
+impl<'a, R: Read + Seek> BlockIterator<'a, R> {
+    fn new(reader: &'a mut JacReader<R>) -> Self {
+        let cursor = BlockCursor::new(reader);
+        Self { reader, cursor }
+    }
+}
+
+impl<'a, R: Read + Seek> Iterator for BlockIterator<'a, R> {
+    type Item = Result<BlockHandle>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.reader.next_block_handle(&mut self.cursor)
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct BlockCursor {
+    mode: BlockIterMode,
+    total_blocks: Option<usize>,
+}
+
+impl BlockCursor {
+    pub(crate) fn new<R: Read + Seek>(reader: &JacReader<R>) -> Self {
+        if let Some(index) = reader.index.clone() {
+            Self {
+                total_blocks: Some(index.blocks.len()),
+                mode: BlockIterMode::Indexed {
+                    entries: index.blocks,
+                    cursor: 0,
+                },
+            }
+        } else {
+            Self {
+                total_blocks: None,
+                mode: BlockIterMode::Streaming {
+                    next_offset: reader.data_start,
+                },
+            }
+        }
+    }
+}
+
+#[derive(Clone)]
+pub(crate) enum BlockIterMode {
     Indexed {
         entries: Vec<BlockIndexEntry>,
         cursor: usize,
@@ -324,36 +394,23 @@ enum BlockIterMode {
     },
 }
 
-impl<'a, R: Read + Seek> BlockIterator<'a, R> {
-    fn new(reader: &'a mut JacReader<R>) -> Self {
-        let mode = if let Some(index) = reader.index.clone() {
+impl<R: Read + Seek> JacReader<R> {
+    pub(crate) fn next_block_handle(
+        &mut self,
+        cursor: &mut BlockCursor,
+    ) -> Option<Result<BlockHandle>> {
+        match &mut cursor.mode {
             BlockIterMode::Indexed {
-                entries: index.blocks,
-                cursor: 0,
-            }
-        } else {
-            BlockIterMode::Streaming {
-                next_offset: reader.data_start,
-            }
-        };
-
-        Self { reader, mode }
-    }
-}
-
-impl<'a, R: Read + Seek> Iterator for BlockIterator<'a, R> {
-    type Item = Result<BlockHandle>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        match &mut self.mode {
-            BlockIterMode::Indexed { entries, cursor } => {
-                if *cursor >= entries.len() {
+                entries,
+                cursor: idx,
+            } => {
+                if *idx >= entries.len() {
                     return None;
                 }
-                let entry = entries[*cursor].clone();
-                *cursor += 1;
+                let entry = entries[*idx].clone();
+                *idx += 1;
 
-                match self.reader.read_block_handle_at(entry.block_offset) {
+                match self.read_block_handle_at(entry.block_offset) {
                     Ok(handle) => {
                         if handle.size != entry.block_size {
                             return Some(Err(JacError::CorruptBlock));
@@ -367,13 +424,13 @@ impl<'a, R: Read + Seek> Iterator for BlockIterator<'a, R> {
                 }
             }
             BlockIterMode::Streaming { next_offset } => {
-                let data_end = self.reader.data_end();
+                let data_end = self.data_end();
                 loop {
                     if *next_offset >= data_end {
                         return None;
                     }
 
-                    match self.reader.read_block_handle_at(*next_offset) {
+                    match self.read_block_handle_at(*next_offset) {
                         Ok(handle) => {
                             *next_offset = handle
                                 .offset
@@ -382,11 +439,11 @@ impl<'a, R: Read + Seek> Iterator for BlockIterator<'a, R> {
                             return Some(Ok(handle));
                         }
                         Err(err) => {
-                            if self.reader.strict_mode {
+                            if self.strict_mode {
                                 return Some(Err(err));
                             }
                             let start = next_offset.saturating_add(1);
-                            match self.reader.resync_from(start) {
+                            match self.resync_from(start) {
                                 Ok(Some(new_offset)) => {
                                     *next_offset = new_offset;
                                     continue;
@@ -445,6 +502,111 @@ impl Iterator for FieldIterator {
         let idx = self.current_idx;
         self.current_idx += 1;
         Some(self.decoder.get_value(idx))
+    }
+}
+
+/// Iterator over complete records streamed block-by-block.
+pub struct RecordStream<'a, R: Read + Seek> {
+    reader: &'a mut JacReader<R>,
+    cursor: BlockCursor,
+    blocks_seen: usize,
+    total_blocks_hint: Option<usize>,
+    current_records: Option<std::vec::IntoIter<Map<String, Value>>>,
+}
+
+impl<'a, R: Read + Seek> RecordStream<'a, R> {
+    pub(crate) fn new(reader: &'a mut JacReader<R>) -> Result<Self> {
+        let cursor = BlockCursor::new(reader);
+        let total_blocks_hint = cursor.total_blocks;
+        Ok(Self {
+            reader,
+            cursor,
+            blocks_seen: 0,
+            total_blocks_hint,
+            current_records: None,
+        })
+    }
+
+    /// Hint for total blocks when an index footer is present; otherwise counts processed blocks.
+    pub fn block_count(&self) -> usize {
+        self.total_blocks_hint.unwrap_or(self.blocks_seen)
+    }
+
+    /// Exact number of blocks decoded so far.
+    pub fn blocks_processed(&self) -> usize {
+        self.blocks_seen
+    }
+}
+
+impl<'a, R: Read + Seek> Iterator for RecordStream<'a, R> {
+    type Item = Result<Map<String, Value>>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if let Some(records) = &mut self.current_records {
+                if let Some(record) = records.next() {
+                    return Some(Ok(record));
+                }
+            }
+
+            match self.reader.next_block_handle(&mut self.cursor)? {
+                Ok(block) => match self.reader.decode_block(&block) {
+                    Ok(decoder) => match decoder.decode_records() {
+                        Ok(records) => {
+                            self.blocks_seen += 1;
+                            self.current_records = Some(records.into_iter());
+                        }
+                        Err(err) => return Some(Err(err)),
+                    },
+                    Err(err) => return Some(Err(err)),
+                },
+                Err(err) => return Some(Err(err)),
+            }
+        }
+    }
+}
+
+/// Iterator streaming values for a single field across the file.
+pub struct ProjectionStream<'a, R: Read + Seek> {
+    reader: &'a mut JacReader<R>,
+    field: String,
+    cursor: BlockCursor,
+    current_iter: Option<FieldIterator>,
+}
+
+impl<'a, R: Read + Seek> ProjectionStream<'a, R> {
+    pub(crate) fn new(reader: &'a mut JacReader<R>, field: String) -> Result<Self> {
+        let cursor = BlockCursor::new(reader);
+        Ok(Self {
+            reader,
+            field,
+            cursor,
+            current_iter: None,
+        })
+    }
+}
+
+impl<'a, R: Read + Seek> Iterator for ProjectionStream<'a, R> {
+    type Item = Result<Option<Value>>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if let Some(iter) = &mut self.current_iter {
+                if let Some(value) = iter.next() {
+                    return Some(value);
+                }
+            }
+
+            match self.reader.next_block_handle(&mut self.cursor)? {
+                Ok(block) => match self.reader.project_field(&block, &self.field) {
+                    Ok(iter) => {
+                        self.current_iter = Some(iter);
+                    }
+                    Err(err) => return Some(Err(err)),
+                },
+                Err(err) => return Some(Err(err)),
+            }
+        }
     }
 }
 

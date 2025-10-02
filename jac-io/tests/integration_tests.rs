@@ -5,9 +5,15 @@ use jac_format::{
     constants::{FILE_MAGIC, INDEX_MAGIC},
     FileHeader, IndexFooter, JacError, Limits,
 };
-use jac_io::{project, JacReader, JacWriter};
+use jac_io::{
+    execute_project, DecompressOptions, JacInput, JacReader, JacWriter, OutputSink, ProjectFormat,
+    ProjectRequest,
+};
 use serde_json::{json, Map, Value};
+use std::fs;
 use std::io::Cursor;
+use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 fn default_compress_opts(block_target_records: usize) -> (FileHeader, CompressOpts) {
     let mut opts = CompressOpts::default();
@@ -277,16 +283,7 @@ fn decode_block_detects_crc_mismatch() {
 fn project_outputs_ndjson_objects() {
     let bytes = sample_projection_file();
 
-    let mut output = Vec::new();
-    project(
-        Cursor::new(bytes.clone()),
-        &mut output,
-        &["user", "active"],
-        true,
-    )
-    .unwrap();
-
-    let output_str = String::from_utf8(output).unwrap();
+    let output_str = run_projection(&bytes, ProjectFormat::Ndjson, &["user", "active"]);
     let expected = concat!(
         "{\"active\":true,\"user\":\"alice\"}\n",
         "{\"user\":\"bob\"}\n",
@@ -299,12 +296,40 @@ fn project_outputs_ndjson_objects() {
 fn project_outputs_json_array() {
     let bytes = sample_projection_file();
 
-    let mut output = Vec::new();
-    project(Cursor::new(bytes), &mut output, &["user", "active"], false).unwrap();
-
-    let output_str = String::from_utf8(output).unwrap();
+    let output_str = run_projection(&bytes, ProjectFormat::JsonArray, &["user", "active"]);
     assert_eq!(
         output_str,
         "[{\"active\":true,\"user\":\"alice\"},{\"user\":\"bob\"},{\"active\":null,\"user\":\"carol\"}]"
     );
+}
+
+fn run_projection(bytes: &[u8], format: ProjectFormat, fields: &[&str]) -> String {
+    let path = temp_output_path(match format {
+        ProjectFormat::Ndjson => "ndjson",
+        ProjectFormat::JsonArray => "json",
+        ProjectFormat::Csv { .. } => "csv",
+    });
+
+    let request = ProjectRequest {
+        input: JacInput::Reader(Box::new(Cursor::new(bytes.to_vec()))),
+        output: OutputSink::Path(path.clone()),
+        fields: fields.iter().map(|field| field.to_string()).collect(),
+        format,
+        options: DecompressOptions::default(),
+    };
+
+    execute_project(request).expect("projection");
+
+    let content = fs::read_to_string(&path).expect("read projection output");
+    let _ = fs::remove_file(&path);
+    content
+}
+
+fn temp_output_path(label: &str) -> PathBuf {
+    let base = std::env::temp_dir();
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    base.join(format!("jac_integration_{}_{}.out", label, unique))
 }

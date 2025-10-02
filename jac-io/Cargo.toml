@@ -8,6 +8,10 @@ license.workspace = true
 repository.workspace = true
 description = "JAC I/O - Streaming file I/O, high-level APIs for compression/decompression"
 
+[features]
+default = []
+async = ["dep:tokio"]
+
 [dependencies]
 jac-format = { path = "../jac-format" }
 jac-codec = { path = "../jac-codec" }
@@ -18,7 +22,7 @@ zstd.workspace = true
 rayon.workspace = true
 bytes.workspace = true
 thiserror.workspace = true
+tokio = { version = "1.37", optional = true, features = ["rt", "rt-multi-thread", "macros"] }
 
 [dev-dependencies]
 proptest.workspace = true
-
