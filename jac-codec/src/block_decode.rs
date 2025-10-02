@@ -148,9 +148,9 @@ impl BlockDecoder {
                 &self.opts.limits,
             )?;
 
-            for record_idx in 0..record_count {
+            for (record_idx, record) in records.iter_mut().enumerate() {
                 if let Some(value) = decoder.get_value(record_idx)? {
-                    records[record_idx].insert(entry.field_name.clone(), value);
+                    record.insert(entry.field_name.clone(), value);
                 }
             }
         }
@@ -172,12 +172,9 @@ impl BlockDecoder {
             &self.opts.limits,
         )?;
 
-        let mut values = Vec::with_capacity(record_count);
-        for record_idx in 0..record_count {
-            values.push(decoder.get_value(record_idx)?);
-        }
-
-        Ok(values)
+        (0..record_count)
+            .map(|idx| decoder.get_value(idx))
+            .collect::<Result<Vec<Option<Value>>>>()
     }
 
     /// Access the block header

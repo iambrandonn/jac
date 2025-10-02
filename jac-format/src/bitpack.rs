@@ -82,6 +82,12 @@ impl TagPacker {
     }
 }
 
+impl Default for TagPacker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// 3-bit type tag unpacker
 #[derive(Debug, Clone)]
 pub struct TagUnpacker {

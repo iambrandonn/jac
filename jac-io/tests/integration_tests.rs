@@ -1,0 +1,310 @@
+//! Integration tests for the JAC I/O layer
+
+use jac_codec::{Codec, CompressOpts, DecompressOpts};
+use jac_format::{
+    constants::{FILE_MAGIC, INDEX_MAGIC},
+    FileHeader, IndexFooter, JacError, Limits,
+};
+use jac_io::{project, JacReader, JacWriter};
+use serde_json::{json, Map, Value};
+use std::io::Cursor;
+
+fn default_compress_opts(block_target_records: usize) -> (FileHeader, CompressOpts) {
+    let mut opts = CompressOpts::default();
+    opts.block_target_records = block_target_records;
+    opts.default_codec = Codec::None; // keep tests deterministic and fast
+    opts.limits = Limits::default();
+
+    let header = FileHeader {
+        flags: jac_format::constants::FLAG_NESTED_OPAQUE,
+        default_compressor: opts.default_codec.compressor_id(),
+        default_compression_level: opts.default_codec.level(),
+        block_size_hint_records: block_target_records,
+        user_metadata: Vec::new(),
+    };
+
+    (header, opts)
+}
+
+fn default_decompress_opts() -> DecompressOpts {
+    DecompressOpts {
+        limits: Limits::default(),
+        verify_checksums: true,
+    }
+}
+
+fn map_from(value: Value) -> Map<String, Value> {
+    value.as_object().expect("object expected").clone()
+}
+
+fn finish_writer(writer: JacWriter<Cursor<Vec<u8>>>, with_index: bool) -> Vec<u8> {
+    writer
+        .finish(with_index)
+        .expect("finish should succeed")
+        .into_inner()
+}
+
+fn sample_projection_file() -> Vec<u8> {
+    let (header, opts) = default_compress_opts(4);
+    let buffer = Cursor::new(Vec::<u8>::new());
+    let mut writer = JacWriter::new(buffer, header, opts).unwrap();
+
+    let records = [
+        json!({"user": "alice", "active": true}),
+        json!({"user": "bob"}),
+        json!({"user": "carol", "active": null}),
+    ];
+
+    for record in &records {
+        writer
+            .write_record(&map_from(record.clone()))
+            .expect("write record");
+    }
+
+    finish_writer(writer, true)
+}
+
+#[test]
+fn writer_writes_index_footer_and_pointer() {
+    let (header, opts) = default_compress_opts(4);
+    let buffer = Cursor::new(Vec::<u8>::new());
+    let mut writer = JacWriter::new(buffer, header, opts).expect("writer");
+
+    for id in 0..3 {
+        let record = map_from(json!({"id": id, "name": format!("user_{id}")}));
+        writer.write_record(&record).expect("record write");
+    }
+
+    let bytes = finish_writer(writer, true);
+    assert!(bytes.starts_with(&FILE_MAGIC), "file magic");
+
+    // Read pointer
+    assert!(bytes.len() >= 8, "file should include index pointer");
+    let pointer_pos = bytes.len() - 8;
+    let index_offset = u64::from_le_bytes(bytes[pointer_pos..].try_into().unwrap()) as usize;
+    assert!(
+        index_offset < pointer_pos,
+        "index offset should precede pointer"
+    );
+    assert_eq!(
+        &bytes[index_offset..index_offset + 4],
+        &INDEX_MAGIC.to_le_bytes()
+    );
+
+    let footer =
+        IndexFooter::decode(&bytes[index_offset..pointer_pos]).expect("decode index footer");
+    assert_eq!(footer.blocks.len(), 1, "single block in index");
+    let entry = &footer.blocks[0];
+    assert_eq!(entry.record_count, 3);
+    assert!(entry.block_offset > FILE_MAGIC.len() as u64);
+}
+
+#[test]
+fn writer_flush_emits_partial_blocks() {
+    let (header, opts) = default_compress_opts(8);
+    let buffer = Cursor::new(Vec::<u8>::new());
+    let mut writer = JacWriter::new(buffer, header, opts).expect("writer");
+
+    let rec_one = map_from(json!({"id": 1, "payload": "first"}));
+    writer.write_record(&rec_one).unwrap();
+    writer.flush().unwrap();
+
+    let rec_two = map_from(json!({"id": 2, "payload": "second"}));
+    writer.write_record(&rec_two).unwrap();
+    writer.flush().unwrap();
+
+    let bytes = finish_writer(writer, true);
+
+    let opts = default_decompress_opts();
+    let mut reader = JacReader::new(Cursor::new(bytes), opts).expect("reader");
+    let blocks = reader
+        .blocks()
+        .collect::<jac_format::Result<Vec<_>>>()
+        .expect("blocks iteration");
+    assert_eq!(blocks.len(), 2, "two blocks flushed manually");
+    assert_eq!(blocks[0].record_count, 1);
+    assert_eq!(blocks[1].record_count, 1);
+}
+
+#[test]
+fn reader_blocks_without_index() {
+    let (header, opts) = default_compress_opts(2);
+    let buffer = Cursor::new(Vec::<u8>::new());
+    let mut writer = JacWriter::new(buffer, header, opts).unwrap();
+
+    for id in 0..3 {
+        let record = map_from(json!({"id": id}));
+        writer.write_record(&record).unwrap();
+    }
+
+    let bytes = finish_writer(writer, false);
+    let opts = default_decompress_opts();
+    let mut reader = JacReader::new(Cursor::new(bytes), opts).unwrap();
+
+    let blocks = reader
+        .blocks()
+        .collect::<jac_format::Result<Vec<_>>>()
+        .unwrap();
+    assert_eq!(blocks.len(), 2, "streaming mode should expose two blocks");
+    assert_eq!(blocks[0].record_count, 2);
+    assert_eq!(blocks[1].record_count, 1);
+}
+
+#[test]
+fn reader_blocks_with_index_uses_footer() {
+    let (header, opts) = default_compress_opts(1);
+    let buffer = Cursor::new(Vec::<u8>::new());
+    let mut writer = JacWriter::new(buffer, header, opts).unwrap();
+
+    for id in 0..3 {
+        let record = map_from(json!({"id": id}));
+        writer.write_record(&record).unwrap();
+    }
+
+    let bytes = finish_writer(writer, true);
+    let opts = default_decompress_opts();
+    let mut reader = JacReader::new(Cursor::new(bytes.clone()), opts).unwrap();
+
+    let blocks = reader
+        .blocks()
+        .collect::<jac_format::Result<Vec<_>>>()
+        .unwrap();
+    assert_eq!(blocks.len(), 3);
+    for handle in &blocks {
+        assert_eq!(
+            handle.record_count, 1,
+            "each block should contain one record"
+        );
+        assert_eq!(handle.offset, handle.offset, "offset stable");
+        assert!(handle.size > 0);
+        assert!(handle.header.fields.len() >= 1);
+    }
+
+    // Ensure index footer still decodes to the same entries
+    let pointer_pos = bytes.len() - 8;
+    let index_offset = u64::from_le_bytes(bytes[pointer_pos..].try_into().unwrap()) as usize;
+    let footer = IndexFooter::decode(&bytes[index_offset..pointer_pos]).unwrap();
+    assert_eq!(footer.blocks.len(), 3);
+}
+
+#[test]
+fn projection_handles_absent_and_null() {
+    let (header, opts) = default_compress_opts(4);
+    let buffer = Cursor::new(Vec::<u8>::new());
+    let mut writer = JacWriter::new(buffer, header, opts).unwrap();
+
+    let records = [
+        json!({"user": "alice"}),
+        json!({"user": "bob", "active": null}),
+        json!({"user": "carol", "active": true}),
+    ];
+
+    for record in records.iter() {
+        writer.write_record(&map_from(record.clone())).unwrap();
+    }
+
+    let bytes = finish_writer(writer, true);
+    let opts = default_decompress_opts();
+    let mut reader = JacReader::new(Cursor::new(bytes), opts).unwrap();
+    let block = reader.blocks().next().unwrap().unwrap();
+
+    let iter = reader.project_field(&block, "active").unwrap();
+    let values = iter.collect::<jac_format::Result<Vec<_>>>().unwrap();
+    assert_eq!(values.len(), 3);
+    assert!(values[0].is_none(), "field absent should yield None");
+    assert_eq!(values[1], Some(Value::Null));
+    assert_eq!(values[2], Some(Value::Bool(true)));
+}
+
+#[test]
+fn resync_skips_corrupt_block_when_not_strict() {
+    let (header, opts) = default_compress_opts(1);
+    let buffer = Cursor::new(Vec::<u8>::new());
+    let mut writer = JacWriter::new(buffer, header, opts).unwrap();
+
+    let rec_one = map_from(json!({"id": 1}));
+    let rec_two = map_from(json!({"id": 2}));
+    writer.write_record(&rec_one).unwrap();
+    writer.flush().unwrap();
+    writer.write_record(&rec_two).unwrap();
+
+    let mut bytes = finish_writer(writer, false);
+
+    // Corrupt the first block magic to trigger resync
+    let header_len = FileHeader::decode(&bytes).unwrap().1;
+    let block_magic_pos = header_len;
+    bytes[block_magic_pos..block_magic_pos + 4].copy_from_slice(&[0u8; 4]);
+
+    let opts = default_decompress_opts();
+    let mut strict_reader = JacReader::new(Cursor::new(bytes.clone()), opts.clone()).unwrap();
+    let first = strict_reader.blocks().next().unwrap();
+    assert!(matches!(first, Err(JacError::CorruptBlock)));
+
+    let mut lenient_reader = JacReader::with_strict_mode(Cursor::new(bytes), opts, false).unwrap();
+    let blocks = lenient_reader
+        .blocks()
+        .collect::<jac_format::Result<Vec<_>>>()
+        .unwrap();
+    assert_eq!(blocks.len(), 1, "corrupted block should be skipped");
+    assert_eq!(blocks[0].record_count, 1);
+    assert_eq!(blocks[0].header.fields.len(), 1);
+}
+
+#[test]
+fn decode_block_detects_crc_mismatch() {
+    let (header, opts) = default_compress_opts(2);
+    let buffer = Cursor::new(Vec::<u8>::new());
+    let mut writer = JacWriter::new(buffer, header, opts).unwrap();
+
+    writer.write_record(&map_from(json!({"id": 42}))).unwrap();
+
+    let mut bytes = finish_writer(writer, true);
+
+    // Locate pointer and corrupt CRC (last 4 bytes before pointer or end when no index)
+    let pointer_pos = bytes.len() - 8;
+    let index_offset = u64::from_le_bytes(bytes[pointer_pos..].try_into().unwrap()) as usize;
+    let crc_pos = index_offset - 4; // CRC directly precedes footer when index present
+    bytes[crc_pos..crc_pos + 4].copy_from_slice(&[0u8; 4]);
+
+    let opts = default_decompress_opts();
+    let mut reader = JacReader::new(Cursor::new(bytes), opts).unwrap();
+    let block = reader.blocks().next().unwrap().unwrap();
+    let result = reader.decode_block(&block);
+    assert!(matches!(result, Err(JacError::ChecksumMismatch)));
+}
+
+#[test]
+fn project_outputs_ndjson_objects() {
+    let bytes = sample_projection_file();
+
+    let mut output = Vec::new();
+    project(
+        Cursor::new(bytes.clone()),
+        &mut output,
+        &["user", "active"],
+        true,
+    )
+    .unwrap();
+
+    let output_str = String::from_utf8(output).unwrap();
+    let expected = concat!(
+        "{\"active\":true,\"user\":\"alice\"}\n",
+        "{\"user\":\"bob\"}\n",
+        "{\"active\":null,\"user\":\"carol\"}\n"
+    );
+    assert_eq!(output_str, expected);
+}
+
+#[test]
+fn project_outputs_json_array() {
+    let bytes = sample_projection_file();
+
+    let mut output = Vec::new();
+    project(Cursor::new(bytes), &mut output, &["user", "active"], false).unwrap();
+
+    let output_str = String::from_utf8(output).unwrap();
+    assert_eq!(
+        output_str,
+        "[{\"active\":true,\"user\":\"alice\"},{\"user\":\"bob\"},{\"active\":null,\"user\":\"carol\"}]"
+    );
+}

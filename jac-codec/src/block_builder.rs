@@ -69,6 +69,11 @@ impl BlockBuilder {
             || self.estimated_memory >= self.opts.limits.max_block_uncompressed_total
     }
 
+    /// Get current record count
+    pub fn record_count(&self) -> usize {
+        self.records.len()
+    }
+
     /// Finalize block and create block data
     pub fn finalize(self) -> Result<BlockData> {
         let record_count = self.records.len();
@@ -143,27 +148,24 @@ impl BlockBuilder {
     fn estimate_record_memory(&self, record: &serde_json::Map<String, serde_json::Value>) -> usize {
         let mut size = 0;
         for (key, value) in record {
-            size += key.len() + self.estimate_value_memory(value);
+            size += key.len() + Self::estimate_value_memory(value);
         }
         size
     }
 
     /// Estimate memory usage for a JSON value
-    fn estimate_value_memory(&self, value: &serde_json::Value) -> usize {
+    fn estimate_value_memory(value: &serde_json::Value) -> usize {
         match value {
             serde_json::Value::Null => 0,
             serde_json::Value::Bool(_) => 1,
             serde_json::Value::Number(n) => n.to_string().len(),
             serde_json::Value::String(s) => s.len(),
             serde_json::Value::Array(arr) => {
-                arr.iter()
-                    .map(|v| self.estimate_value_memory(v))
-                    .sum::<usize>()
-                    + 8 // overhead
+                arr.iter().map(Self::estimate_value_memory).sum::<usize>() + 8 // overhead
             }
             serde_json::Value::Object(obj) => {
                 obj.iter()
-                    .map(|(k, v)| k.len() + self.estimate_value_memory(v))
+                    .map(|(k, v)| k.len() + Self::estimate_value_memory(v))
                     .sum::<usize>()
                     + 8 // overhead
             }

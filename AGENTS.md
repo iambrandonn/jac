@@ -363,7 +363,7 @@ jac unpack file.jac -o debug.ndjson --ndjson
 
 ## Current Status
 
-**Implementation Phase:** Phase 5 (Segment Decoder) - ✅ Complete
+**Implementation Phase:** Phase 6 (File I/O Layer) - ✅ Complete
 
 **Completed in Phase 0:**
 - ✅ Rust workspace initialized with proper crate topology
@@ -430,10 +430,17 @@ jac unpack file.jac -o debug.ndjson --ndjson
 - ✅ Security limit enforcement (decompression bomb prevention)
 - ✅ Test coverage: 24 tests in jac-codec, 66 tests in jac-format (90 total)
 
+**Completed in Phase 6:**
+- ✅ `JacWriter` streamable encoder with partial-block flush, index footer emission, and drop guard (`jac-io/src/writer.rs`)
+- ✅ `JacReader` streaming decoder supporting index-driven and sequential iteration, CRC verification, and strict vs. resync modes (`jac-io/src/reader.rs`)
+- ✅ High-level `compress`, `decompress_full`, and `project` APIs with NDJSON/JSON-array projection output (`jac-io/src/lib.rs`)
+- ✅ Parallel helpers refactored for direct use (`jac-io/src/parallel.rs`)
+- ✅ Integration tests covering index pointer, manual flush, checksum failure, projection semantics, and resynchronization (`jac-io/tests/integration_tests.rs`)
+- ✅ Workspace-wide `cargo clippy` clean (constants/docs/errors updated) and `cargo test` passing
+
 **Next Steps:**
-1. Begin Phase 6: File I/O Layer (`jac-io`)
-2. Implement JacWriter for streaming compression
-3. Implement JacReader for streaming decompression and projection
+1. Begin Phase 7: High-Level API & JSON Streaming refinements (`jac-io/src/lib.rs`)
+2. Flesh out `JacWriter::finish` ergonomics in CLI workflows and expose projection helpers in `jac-cli`
+3. Add end-to-end CLI integration tests (pack/unpack/cat) and update README/CLI usage docs
 
-**Last Updated:** 2025-01-27 (Phase 5 Complete)
-
+**Last Updated:** 2025-02-17 (Phase 6 Complete)

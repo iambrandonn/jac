@@ -100,7 +100,7 @@ impl FieldSegmentDecoder {
         cursor = tag_end;
 
         let mut tags = Vec::with_capacity(present_count);
-        while let Some(raw) = tag_unpacker.next() {
+        for raw in &mut tag_unpacker {
             let tag = TypeTag::from_u8(raw)?;
             tags.push(tag);
         }
@@ -182,9 +182,7 @@ impl FieldSegmentDecoder {
                 return Err(JacError::UnexpectedEof);
             }
             let bits = BitVec::<u8, Lsb0>::from_slice(&decompressed[cursor..end]);
-            for idx in 0..bool_count {
-                bool_values.push(bits.get(idx).map(|bit| *bit).unwrap_or(false));
-            }
+            bool_values.extend(bits.iter().take(bool_count).map(|bit| *bit));
             cursor = end;
         }
 
@@ -194,12 +192,12 @@ impl FieldSegmentDecoder {
             if dir_entry.encoding_flags & ENCODING_FLAG_DELTA != 0 {
                 let (base_raw, base_bytes) = decode_uleb128(&decompressed[cursor..])?;
                 cursor += base_bytes;
-                let mut current = zigzag_decode(base_raw) as i64;
+                let mut current = zigzag_decode(base_raw);
                 int_values.push(current);
                 for _ in 1..int_count {
                     let (delta_raw, delta_bytes) = decode_uleb128(&decompressed[cursor..])?;
                     cursor += delta_bytes;
-                    let delta = zigzag_decode(delta_raw) as i64;
+                    let delta = zigzag_decode(delta_raw);
                     current = current
                         .checked_add(delta)
                         .ok_or_else(|| JacError::CorruptBlock)?;
@@ -209,7 +207,7 @@ impl FieldSegmentDecoder {
                 for _ in 0..int_count {
                     let (value_raw, value_bytes) = decode_uleb128(&decompressed[cursor..])?;
                     cursor += value_bytes;
-                    let value = zigzag_decode(value_raw) as i64;
+                    let value = zigzag_decode(value_raw);
                     int_values.push(value);
                 }
             }
@@ -328,7 +326,7 @@ impl FieldSegmentDecoder {
         let mut object_idx = 0;
         let mut array_idx = 0;
 
-        for record_idx in 0..record_count {
+        for (record_idx, slot) in values.iter_mut().enumerate() {
             if !presence.is_present(record_idx) {
                 continue;
             }
@@ -391,7 +389,7 @@ impl FieldSegmentDecoder {
                 }
             };
 
-            values[record_idx] = Some(value);
+            *slot = Some(value);
             present_idx += 1;
         }
 

@@ -21,8 +21,8 @@ impl Decimal {
             return Err(crate::error::JacError::CorruptBlock);
         }
 
-        let (sign, s) = if s.starts_with('-') {
-            (true, &s[1..])
+        let (sign, s) = if let Some(stripped) = s.strip_prefix('-') {
+            (true, stripped)
         } else {
             (false, s)
         };
@@ -116,7 +116,7 @@ impl Decimal {
 
         // Validate all digits are ASCII '0'..'9'
         for &digit in &digits {
-            if digit < b'0' || digit > b'9' {
+            if !digit.is_ascii_digit() {
                 return Err(crate::error::JacError::CorruptBlock);
             }
         }
@@ -259,7 +259,7 @@ impl Decimal {
 
         // Validate digits are ASCII '0'..'9'
         for &digit in &digits {
-            if digit < b'0' || digit > b'9' {
+            if !digit.is_ascii_digit() {
                 return Err(crate::error::JacError::CorruptBlock);
             }
         }

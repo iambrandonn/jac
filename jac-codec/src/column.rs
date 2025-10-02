@@ -9,6 +9,8 @@ use jac_format::{
 use serde_json;
 use std::collections::HashMap;
 
+type DictionaryBuild = (Option<(Vec<String>, HashMap<String, usize>)>, bool);
+
 /// Column builder for a single field across records
 #[derive(Clone)]
 pub struct ColumnBuilder {
@@ -257,10 +259,7 @@ impl ColumnBuilder {
     }
 
     /// Build string dictionary if beneficial
-    fn build_string_dictionary(
-        &self,
-        opts: &CompressOpts,
-    ) -> Result<(Option<(Vec<String>, HashMap<String, usize>)>, bool)> {
+    fn build_string_dictionary(&self, opts: &CompressOpts) -> Result<DictionaryBuild> {
         if self.strings.is_empty() {
             return Ok((None, false));
         }

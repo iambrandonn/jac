@@ -57,7 +57,7 @@ impl FileHeader {
         }
 
         // Magic bytes
-        if &bytes[pos..pos + 4] != &FILE_MAGIC {
+        if bytes[pos..pos + 4] != FILE_MAGIC {
             return Err(crate::error::JacError::InvalidMagic);
         }
         pos += 4;
