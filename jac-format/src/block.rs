@@ -3,6 +3,7 @@
 use crate::constants::BLOCK_MAGIC;
 use crate::limits::Limits;
 use crate::varint::{decode_uleb128, encode_uleb128};
+use std::convert::TryFrom;
 
 /// Block header
 #[derive(Debug, Clone)]
@@ -43,75 +44,34 @@ pub struct FieldDirectoryEntry {
 impl BlockHeader {
     /// Encode block header to bytes
     pub fn encode(&self) -> Result<Vec<u8>, crate::error::JacError> {
-        let mut result = Vec::new();
-
-        // Block magic (little-endian u32)
-        result.extend_from_slice(&BLOCK_MAGIC.to_le_bytes());
-
-        // Placeholder for header_len (will be filled in later)
-        let header_len_pos = result.len();
-        result.extend_from_slice(&[0u8; 8]); // Reserve space for ULEB128
+        let mut header_body = Vec::new();
 
         // Record count (ULEB128)
-        result.extend_from_slice(&encode_uleb128(self.record_count as u64));
+        header_body.extend_from_slice(&encode_uleb128(self.record_count as u64));
 
         // Field count (ULEB128)
-        result.extend_from_slice(&encode_uleb128(self.fields.len() as u64));
+        header_body.extend_from_slice(&encode_uleb128(self.fields.len() as u64));
 
         // Field directory entries
         for field in &self.fields {
-            // Field name length (ULEB128)
-            result.extend_from_slice(&encode_uleb128(field.field_name.len() as u64));
-
-            // Field name (UTF-8)
-            result.extend_from_slice(field.field_name.as_bytes());
-
-            // Compressor
-            result.push(field.compressor);
-
-            // Compression level
-            result.push(field.compression_level);
-
-            // Presence bytes (ULEB128)
-            result.extend_from_slice(&encode_uleb128(field.presence_bytes as u64));
-
-            // Tag bytes (ULEB128)
-            result.extend_from_slice(&encode_uleb128(field.tag_bytes as u64));
-
-            // Value count present (ULEB128)
-            result.extend_from_slice(&encode_uleb128(field.value_count_present as u64));
-
-            // Encoding flags (ULEB128)
-            result.extend_from_slice(&encode_uleb128(field.encoding_flags));
-
-            // Dictionary entry count (ULEB128)
-            result.extend_from_slice(&encode_uleb128(field.dict_entry_count as u64));
-
-            // Segment uncompressed length (ULEB128)
-            result.extend_from_slice(&encode_uleb128(field.segment_uncompressed_len as u64));
-
-            // Segment compressed length (ULEB128)
-            result.extend_from_slice(&encode_uleb128(field.segment_compressed_len as u64));
-
-            // Segment offset (ULEB128)
-            result.extend_from_slice(&encode_uleb128(field.segment_offset as u64));
+            header_body.extend_from_slice(&encode_uleb128(field.field_name.len() as u64));
+            header_body.extend_from_slice(field.field_name.as_bytes());
+            header_body.push(field.compressor);
+            header_body.push(field.compression_level);
+            header_body.extend_from_slice(&encode_uleb128(field.presence_bytes as u64));
+            header_body.extend_from_slice(&encode_uleb128(field.tag_bytes as u64));
+            header_body.extend_from_slice(&encode_uleb128(field.value_count_present as u64));
+            header_body.extend_from_slice(&encode_uleb128(field.encoding_flags));
+            header_body.extend_from_slice(&encode_uleb128(field.dict_entry_count as u64));
+            header_body.extend_from_slice(&encode_uleb128(field.segment_uncompressed_len as u64));
+            header_body.extend_from_slice(&encode_uleb128(field.segment_compressed_len as u64));
+            header_body.extend_from_slice(&encode_uleb128(field.segment_offset as u64));
         }
 
-        // Calculate and write header_len
-        let header_len = result.len() - header_len_pos - 8; // Length after the header_len field
-        let header_len_bytes = encode_uleb128(header_len as u64);
-
-        // Replace the placeholder with actual header_len
-        result[header_len_pos..header_len_pos + header_len_bytes.len()]
-            .copy_from_slice(&header_len_bytes);
-
-        // Remove any excess bytes if header_len_bytes is shorter than 8
-        if header_len_bytes.len() < 8 {
-            let excess = 8 - header_len_bytes.len();
-            for _ in 0..excess {
-                result.remove(header_len_pos + header_len_bytes.len());
-            }
-        }
+        let mut result = Vec::with_capacity(4 + 10 + header_body.len());
+        result.extend_from_slice(&BLOCK_MAGIC.to_le_bytes());
+        result.extend_from_slice(&encode_uleb128(header_body.len() as u64));
+        result.extend_from_slice(&header_body);
 
         Ok(result)
     }
@@ -134,15 +94,31 @@ impl BlockHeader {
         pos += 4;
 
         // Header length (ULEB128)
-        let (_header_len, header_len_bytes) = decode_uleb128(&bytes[pos..])?;
+        let (header_len_u64, header_len_bytes) = decode_uleb128(&bytes[pos..])?;
+        let header_len = usize::try_from(header_len_u64).map_err(|_| {
+            crate::error::JacError::LimitExceeded("header_len exceeds supported size".to_string())
+        })?;
         pos += header_len_bytes;
 
+        let header_body_start = pos;
+        let header_body_end = header_body_start
+            .checked_add(header_len)
+            .ok_or_else(|| crate::error::JacError::CorruptBlock)?;
+        if header_body_end > bytes.len() {
+            return Err(crate::error::JacError::UnexpectedEof);
+        }
+
         // Record count (ULEB128)
-        let (record_count, count_bytes) = decode_uleb128(&bytes[pos..])?;
+        let (record_count_u64, count_bytes) = decode_uleb128(&bytes[pos..header_body_end])?;
         pos += count_bytes;
+        let record_count = usize::try_from(record_count_u64).map_err(|_| {
+            crate::error::JacError::LimitExceeded(
+                "record_count exceeds supported size".to_string(),
+            )
+        })?;
 
         // Enforce record count limit
-        if record_count as usize > limits.max_records_per_block {
+        if record_count > limits.max_records_per_block {
             return Err(crate::error::JacError::LimitExceeded(format!(
                 "Record count {} exceeds limit {}",
                 record_count, limits.max_records_per_block
@@ -150,11 +126,16 @@ impl BlockHeader {
         }
 
         // Field count (ULEB128)
-        let (field_count, field_count_bytes) = decode_uleb128(&bytes[pos..])?;
+        let (field_count_u64, field_count_bytes) = decode_uleb128(&bytes[pos..header_body_end])?;
         pos += field_count_bytes;
+        let field_count = usize::try_from(field_count_u64).map_err(|_| {
+            crate::error::JacError::LimitExceeded(
+                "field_count exceeds supported size".to_string(),
+            )
+        })?;
 
         // Enforce field count limit
-        if field_count as usize > limits.max_fields_per_block {
+        if field_count > limits.max_fields_per_block {
             return Err(crate::error::JacError::LimitExceeded(format!(
                 "Field count {} exceeds limit {}",
                 field_count, limits.max_fields_per_block
@@ -164,12 +145,21 @@ impl BlockHeader {
         // Decode field directory entries
         let mut fields = Vec::new();
         for _ in 0..field_count {
+            if pos >= header_body_end {
+                return Err(crate::error::JacError::UnexpectedEof);
+            }
+
             // Field name length (ULEB128)
-            let (name_len, name_len_bytes) = decode_uleb128(&bytes[pos..])?;
+            let (name_len_u64, name_len_bytes) = decode_uleb128(&bytes[pos..header_body_end])?;
             pos += name_len_bytes;
+            let name_len = usize::try_from(name_len_u64).map_err(|_| {
+                crate::error::JacError::LimitExceeded(
+                    "Field name length exceeds supported size".to_string(),
+                )
+            })?;
 
             // Check field name length limit
-            if name_len as usize > limits.max_string_len_per_value {
+            if name_len > limits.max_string_len_per_value {
                 return Err(crate::error::JacError::LimitExceeded(format!(
                     "Field name length {} exceeds limit {}",
                     name_len, limits.max_string_len_per_value
@@ -177,14 +167,14 @@ impl BlockHeader {
             }
 
             // Check if we have enough bytes for the field name
-            if pos + name_len as usize > bytes.len() {
+            if pos + name_len > header_body_end {
                 return Err(crate::error::JacError::UnexpectedEof);
             }
 
             // Field name (UTF-8)
-            let field_name = String::from_utf8(bytes[pos..pos + name_len as usize].to_vec())
+            let field_name = String::from_utf8(bytes[pos..pos + name_len].to_vec())
                 .map_err(|_| crate::error::JacError::CorruptBlock)?;
-            pos += name_len as usize;
+            pos += name_len;
 
             // Check remaining length for fixed fields
             if pos + 1 + 1 > bytes.len() {
@@ -201,27 +191,64 @@ impl BlockHeader {
             pos += 1;
 
             // Presence bytes (ULEB128)
-            let (presence_bytes, presence_bytes_len) = decode_uleb128(&bytes[pos..])?;
+            let (presence_bytes_u64, presence_bytes_len) = decode_uleb128(&bytes[pos..header_body_end])?;
             pos += presence_bytes_len;
+            let presence_bytes = usize::try_from(presence_bytes_u64).map_err(|_| {
+                crate::error::JacError::LimitExceeded(
+                    "presence_bytes exceeds supported size".to_string(),
+                )
+            })?;
+            if presence_bytes > limits.max_presence_bytes {
+                return Err(crate::error::JacError::LimitExceeded(format!(
+                    "Presence bytes {} exceeds limit {}",
+                    presence_bytes, limits.max_presence_bytes
+                )));
+            }
 
             // Tag bytes (ULEB128)
-            let (tag_bytes, tag_bytes_len) = decode_uleb128(&bytes[pos..])?;
+            let (tag_bytes_u64, tag_bytes_len) = decode_uleb128(&bytes[pos..header_body_end])?;
             pos += tag_bytes_len;
+            let tag_bytes = usize::try_from(tag_bytes_u64).map_err(|_| {
+                crate::error::JacError::LimitExceeded(
+                    "tag_bytes exceeds supported size".to_string(),
+                )
+            })?;
+            if tag_bytes > limits.max_tag_bytes {
+                return Err(crate::error::JacError::LimitExceeded(format!(
+                    "Tag bytes {} exceeds limit {}",
+                    tag_bytes, limits.max_tag_bytes
+                )));
+            }
 
             // Value count present (ULEB128)
-            let (value_count_present, value_count_present_len) = decode_uleb128(&bytes[pos..])?;
+            let (value_count_present_u64, value_count_present_len) =
+                decode_uleb128(&bytes[pos..header_body_end])?;
             pos += value_count_present_len;
+            let value_count_present = usize::try_from(value_count_present_u64).map_err(|_| {
+                crate::error::JacError::LimitExceeded(
+                    "value_count_present exceeds supported size".to_string(),
+                )
+            })?;
+            if value_count_present > record_count {
+                return Err(crate::error::JacError::CorruptBlock);
+            }
 
             // Encoding flags (ULEB128)
-            let (encoding_flags, encoding_flags_len) = decode_uleb128(&bytes[pos..])?;
+            let (encoding_flags, encoding_flags_len) = decode_uleb128(&bytes[pos..header_body_end])?;
             pos += encoding_flags_len;
 
             // Dictionary entry count (ULEB128)
-            let (dict_entry_count, dict_entry_count_len) = decode_uleb128(&bytes[pos..])?;
+            let (dict_entry_count_u64, dict_entry_count_len) =
+                decode_uleb128(&bytes[pos..header_body_end])?;
             pos += dict_entry_count_len;
+            let dict_entry_count = usize::try_from(dict_entry_count_u64).map_err(|_| {
+                crate::error::JacError::LimitExceeded(
+                    "dict_entry_count exceeds supported size".to_string(),
+                )
+            })?;
 
             // Enforce dictionary entry count limit
-            if dict_entry_count as usize > limits.max_dict_entries_per_field {
+            if dict_entry_count > limits.max_dict_entries_per_field {
                 return Err(crate::error::JacError::LimitExceeded(format!(
                     "Dictionary entry count {} exceeds limit {}",
                     dict_entry_count, limits.max_dict_entries_per_field
@@ -229,12 +256,18 @@ impl BlockHeader {
             }
 
             // Segment uncompressed length (ULEB128)
-            let (segment_uncompressed_len, segment_uncompressed_len_len) =
-                decode_uleb128(&bytes[pos..])?;
+            let (segment_uncompressed_len_u64, segment_uncompressed_len_len) =
+                decode_uleb128(&bytes[pos..header_body_end])?;
             pos += segment_uncompressed_len_len;
+            let segment_uncompressed_len =
+                usize::try_from(segment_uncompressed_len_u64).map_err(|_| {
+                    crate::error::JacError::LimitExceeded(
+                        "segment_uncompressed_len exceeds supported size".to_string(),
+                    )
+                })?;
 
             // Enforce segment uncompressed length limit
-            if segment_uncompressed_len as usize > limits.max_segment_uncompressed_len {
+            if segment_uncompressed_len > limits.max_segment_uncompressed_len {
                 return Err(crate::error::JacError::LimitExceeded(format!(
                     "Segment uncompressed length {} exceeds limit {}",
                     segment_uncompressed_len, limits.max_segment_uncompressed_len
@@ -242,32 +275,48 @@ impl BlockHeader {
             }
 
             // Segment compressed length (ULEB128)
-            let (segment_compressed_len, segment_compressed_len_len) =
-                decode_uleb128(&bytes[pos..])?;
+            let (segment_compressed_len_u64, segment_compressed_len_len) =
+                decode_uleb128(&bytes[pos..header_body_end])?;
             pos += segment_compressed_len_len;
+            let segment_compressed_len =
+                usize::try_from(segment_compressed_len_u64).map_err(|_| {
+                    crate::error::JacError::LimitExceeded(
+                        "segment_compressed_len exceeds supported size".to_string(),
+                    )
+                })?;
 
             // Segment offset (ULEB128)
-            let (segment_offset, segment_offset_len) = decode_uleb128(&bytes[pos..])?;
+            let (segment_offset_u64, segment_offset_len) =
+                decode_uleb128(&bytes[pos..header_body_end])?;
             pos += segment_offset_len;
+            let segment_offset = usize::try_from(segment_offset_u64).map_err(|_| {
+                crate::error::JacError::LimitExceeded(
+                    "segment_offset exceeds supported size".to_string(),
+                )
+            })?;
 
             fields.push(FieldDirectoryEntry {
                 field_name,
                 compressor,
                 compression_level,
-                presence_bytes: presence_bytes as usize,
-                tag_bytes: tag_bytes as usize,
-                value_count_present: value_count_present as usize,
+                presence_bytes,
+                tag_bytes,
+                value_count_present,
                 encoding_flags,
-                dict_entry_count: dict_entry_count as usize,
-                segment_uncompressed_len: segment_uncompressed_len as usize,
-                segment_compressed_len: segment_compressed_len as usize,
-                segment_offset: segment_offset as usize,
+                dict_entry_count,
+                segment_uncompressed_len,
+                segment_compressed_len,
+                segment_offset,
             });
+        }
+
+        if pos != header_body_end {
+            return Err(crate::error::JacError::CorruptBlock);
         }
 
         Ok((
             Self {
-                record_count: record_count as usize,
+                record_count,
                 fields,
             },
             pos,
@@ -279,6 +328,8 @@ impl BlockHeader {
 mod tests {
     use super::*;
     use crate::constants::*;
+    use crate::error::JacError;
+    use crate::varint::{decode_uleb128, encode_uleb128};
 
     fn create_test_limits() -> Limits {
         Limits {
@@ -521,6 +572,108 @@ mod tests {
     }
 
     #[test]
+    fn test_block_header_presence_bytes_limit_enforced() {
+        let mut limits = create_test_limits();
+        limits.max_presence_bytes = 4;
+
+        let field = FieldDirectoryEntry {
+            field_name: "field".to_string(),
+            compressor: 1,
+            compression_level: 15,
+            presence_bytes: 5,
+            tag_bytes: 1,
+            value_count_present: 1,
+            encoding_flags: 0,
+            dict_entry_count: 0,
+            segment_uncompressed_len: 100,
+            segment_compressed_len: 50,
+            segment_offset: 0,
+        };
+
+        let header = BlockHeader {
+            record_count: 1,
+            fields: vec![field],
+        };
+
+        let encoded = header.encode().unwrap();
+        let result = BlockHeader::decode(&encoded, &limits);
+        assert!(matches!(result, Err(JacError::LimitExceeded(msg)) if msg.contains("Presence bytes")));
+    }
+
+    #[test]
+    fn test_block_header_tag_bytes_limit_enforced() {
+        let mut limits = create_test_limits();
+        limits.max_tag_bytes = 4;
+
+        let field = FieldDirectoryEntry {
+            field_name: "field".to_string(),
+            compressor: 1,
+            compression_level: 15,
+            presence_bytes: 1,
+            tag_bytes: 5,
+            value_count_present: 5,
+            encoding_flags: 0,
+            dict_entry_count: 0,
+            segment_uncompressed_len: 100,
+            segment_compressed_len: 50,
+            segment_offset: 0,
+        };
+
+        let header = BlockHeader {
+            record_count: 10,
+            fields: vec![field],
+        };
+
+        let encoded = header.encode().unwrap();
+        let result = BlockHeader::decode(&encoded, &limits);
+        assert!(matches!(result, Err(JacError::LimitExceeded(msg)) if msg.contains("Tag bytes")));
+    }
+
+    #[test]
+    fn test_block_header_value_count_exceeds_record_count() {
+        let field = FieldDirectoryEntry {
+            field_name: "field".to_string(),
+            compressor: 1,
+            compression_level: 15,
+            presence_bytes: 1,
+            tag_bytes: 1,
+            value_count_present: 11,
+            encoding_flags: 0,
+            dict_entry_count: 0,
+            segment_uncompressed_len: 100,
+            segment_compressed_len: 50,
+            segment_offset: 0,
+        };
+
+        let header = BlockHeader {
+            record_count: 10,
+            fields: vec![field],
+        };
+
+        let encoded = header.encode().unwrap();
+        let result = BlockHeader::decode(&encoded, &create_test_limits());
+        assert!(matches!(result, Err(JacError::CorruptBlock)));
+    }
+
+    #[test]
+    fn test_block_header_header_len_mismatch_detected() {
+        let header = BlockHeader {
+            record_count: 10,
+            fields: vec![create_test_field_entry()],
+        };
+
+        let mut encoded = header.encode().unwrap();
+        let (original_len, len_bytes) = decode_uleb128(&encoded[4..]).unwrap();
+        let new_len = original_len + 3;
+        let replacement = encode_uleb128(new_len);
+        encoded.splice(4..4 + len_bytes, replacement.iter().copied());
+        encoded.extend_from_slice(&[0u8; 3]);
+
+        let result = BlockHeader::decode(&encoded, &create_test_limits());
+        assert!(matches!(result, Err(JacError::CorruptBlock)));
+    }
+
+    #[test]
     fn test_block_header_limit_exceeded_dict_entries() {
         let field = FieldDirectoryEntry {
             field_name: "test_field".to_string(),
@@ -632,7 +785,7 @@ mod tests {
             compression_level: 255,
             presence_bytes: 1_000_000,
             tag_bytes: 500_000,
-            value_count_present: 800_000,
+            value_count_present: 80_000,
             encoding_flags: u64::MAX,
             dict_entry_count: 4_000,
             segment_uncompressed_len: 50 * 1024 * 1024,

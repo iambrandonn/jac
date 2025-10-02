@@ -3,6 +3,7 @@
 use crate::checksum::{compute_crc32c, verify_crc32c};
 use crate::constants::INDEX_MAGIC;
 use crate::varint::{decode_uleb128, encode_uleb128};
+use std::convert::TryFrom;
 
 /// Index footer
 #[derive(Debug, Clone)]
@@ -90,43 +91,81 @@ impl IndexFooter {
         pos += 4;
 
         // Index length (ULEB128)
-        let (_index_len, index_len_bytes) = decode_uleb128(&bytes[pos..])?;
+        let (index_len_u64, index_len_bytes) = decode_uleb128(&bytes[pos..])?;
+        let index_len = usize::try_from(index_len_u64).map_err(|_| {
+            crate::error::JacError::LimitExceeded("index_len exceeds supported size".to_string())
+        })?;
         pos += index_len_bytes;
 
+        let index_body_start = pos;
+        let index_body_end = index_body_start
+            .checked_add(index_len)
+            .ok_or_else(|| crate::error::JacError::CorruptBlock)?;
+        if index_body_end > bytes.len() {
+            return Err(crate::error::JacError::UnexpectedEof);
+        }
+
         // Block count (ULEB128)
-        let (block_count, count_bytes) = decode_uleb128(&bytes[pos..])?;
+        let (block_count_u64, count_bytes) = decode_uleb128(&bytes[pos..index_body_end])?;
         pos += count_bytes;
+        let block_count = usize::try_from(block_count_u64).map_err(|_| {
+            crate::error::JacError::LimitExceeded(
+                "block_count exceeds supported size".to_string(),
+            )
+        })?;
 
         // Decode block index entries
         let mut blocks = Vec::new();
         for _ in 0..block_count {
             // Block offset (ULEB128)
-            let (block_offset, offset_bytes) = decode_uleb128(&bytes[pos..])?;
+            if pos >= index_body_end {
+                return Err(crate::error::JacError::UnexpectedEof);
+            }
+            let (block_offset, offset_bytes) = decode_uleb128(&bytes[pos..index_body_end])?;
             pos += offset_bytes;
 
             // Block size (ULEB128)
-            let (block_size, size_bytes) = decode_uleb128(&bytes[pos..])?;
+            let (block_size_u64, size_bytes) = decode_uleb128(&bytes[pos..index_body_end])?;
             pos += size_bytes;
+            let block_size = usize::try_from(block_size_u64).map_err(|_| {
+                crate::error::JacError::LimitExceeded(
+                    "block_size exceeds supported size".to_string(),
+                )
+            })?;
 
             // Record count (ULEB128)
-            let (record_count, record_count_bytes) = decode_uleb128(&bytes[pos..])?;
+            let (record_count_u64, record_count_bytes) =
+                decode_uleb128(&bytes[pos..index_body_end])?;
             pos += record_count_bytes;
+            let record_count = usize::try_from(record_count_u64).map_err(|_| {
+                crate::error::JacError::LimitExceeded(
+                    "record_count exceeds supported size".to_string(),
+                )
+            })?;
 
             blocks.push(BlockIndexEntry {
                 block_offset,
-                block_size: block_size as usize,
-                record_count: record_count as usize,
+                block_size,
+                record_count,
             });
         }
 
+        if pos != index_body_end {
+            return Err(crate::error::JacError::CorruptBlock);
+        }
+
         // Verify CRC32C
-        if pos + 4 > bytes.len() {
+        if index_body_end + 4 > bytes.len() {
             return Err(crate::error::JacError::UnexpectedEof);
         }
 
-        let expected_crc =
-            u32::from_le_bytes([bytes[pos], bytes[pos + 1], bytes[pos + 2], bytes[pos + 3]]);
-        let footer_without_crc = &bytes[0..pos];
+        let expected_crc = u32::from_le_bytes([
+            bytes[index_body_end],
+            bytes[index_body_end + 1],
+            bytes[index_body_end + 2],
+            bytes[index_body_end + 3],
+        ]);
+        let footer_without_crc = &bytes[0..index_body_end];
         verify_crc32c(footer_without_crc, expected_crc)?;
 
         Ok(Self { blocks })
@@ -136,6 +175,8 @@ impl IndexFooter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::JacError;
+    use crate::varint::{decode_uleb128, encode_uleb128};
 
     fn create_test_block_entry() -> BlockIndexEntry {
         BlockIndexEntry {
@@ -259,6 +300,23 @@ mod tests {
         } else {
             panic!("Expected ChecksumMismatch error");
         }
+    }
+
+    #[test]
+    fn test_index_footer_index_len_mismatch_detected() {
+        let footer = IndexFooter {
+            blocks: vec![create_test_block_entry()],
+        };
+
+        let mut encoded = footer.encode().unwrap();
+        let (original_len, len_bytes) = decode_uleb128(&encoded[4..]).unwrap();
+        let new_len = original_len + 5;
+        let replacement = encode_uleb128(new_len);
+        encoded.splice(4..4 + len_bytes, replacement.iter().copied());
+        encoded.extend_from_slice(&[0u8; 5]);
+
+        let result = IndexFooter::decode(&encoded);
+        assert!(matches!(result, Err(JacError::CorruptBlock)));
     }
 
     #[test]
