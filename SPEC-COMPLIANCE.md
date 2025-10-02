@@ -13,12 +13,12 @@ This document tracks implementation status of JAC v1 Draft 0.9.1 specification r
 
 | Requirement | Spec Ref | Implementation | Test | Status |
 |-------------|----------|----------------|------|--------|
-| File magic bytes (JAC\x01) | §3.2 | TBD | TBD | ❌ |
-| Little-endian integers | §3.2 | TBD | TBD | ❌ |
-| File header structure | §3.3 | TBD | TBD | ❌ |
-| Block structure | §3.4 | TBD | TBD | ❌ |
-| Block CRC32C verification | §3.4 | TBD | TBD | ❌ |
-| Optional index footer | §7 | TBD | TBD | ❌ |
+| File magic bytes (JAC\x01) | §3.2 | constants.rs | header.rs tests | ✅ |
+| Little-endian integers | §3.2 | varint.rs, header.rs, block.rs, footer.rs | All structure tests | ✅ |
+| File header structure | §3.3 | header.rs | header.rs tests | ✅ |
+| Block structure | §3.4 | block.rs | block.rs tests | ✅ |
+| Block CRC32C verification | §3.4 | checksum.rs | checksum.rs tests | ✅ |
+| Optional index footer | §7 | footer.rs | footer.rs tests | ✅ |
 
 ## Field Segments & Encodings (§4)
 
@@ -46,32 +46,32 @@ This document tracks implementation status of JAC v1 Draft 0.9.1 specification r
 
 | Requirement | Spec Ref | Implementation | Test | Status |
 |-------------|----------|----------------|------|--------|
-| InvalidMagic error | §8 | TBD | TBD | ❌ |
-| UnsupportedVersion error | §8 | TBD | TBD | ❌ |
-| CorruptHeader error | §8 | TBD | TBD | ❌ |
-| CorruptBlock error | §8 | TBD | TBD | ❌ |
-| ChecksumMismatch error | §8 | TBD | TBD | ❌ |
-| UnexpectedEof error | §8 | TBD | TBD | ❌ |
-| DecompressError | §8 | TBD | TBD | ❌ |
-| LimitExceeded error | §8 | TBD | TBD | ❌ |
-| TypeMismatch error | §8 | TBD | TBD | ❌ |
-| DictionaryError | §8 | TBD | TBD | ❌ |
-| UnsupportedFeature error | §8 | TBD | TBD | ❌ |
-| UnsupportedCompression error | §8 | TBD | TBD | ❌ |
+| InvalidMagic error | §8 | error.rs | header.rs tests | ✅ |
+| UnsupportedVersion error | §8 | error.rs | TBD | 🚧 |
+| CorruptHeader error | §8 | error.rs | TBD | 🚧 |
+| CorruptBlock error | §8 | error.rs | block.rs, footer.rs tests | ✅ |
+| ChecksumMismatch error | §8 | error.rs, checksum.rs | checksum.rs, footer.rs tests | ✅ |
+| UnexpectedEof error | §8 | error.rs | header.rs, block.rs, footer.rs tests | ✅ |
+| DecompressError | §8 | error.rs | TBD | 🚧 |
+| LimitExceeded error | §8 | error.rs | block.rs tests | ✅ |
+| TypeMismatch error | §8 | error.rs | TBD | 🚧 |
+| DictionaryError | §8 | error.rs | TBD | 🚧 |
+| UnsupportedFeature error | §8 | error.rs | types.rs tests | ✅ |
+| UnsupportedCompression error | §8 | error.rs | TBD | 🚧 |
 
 ## Security & Limits (Addendum §2.1)
 
 | Requirement | Spec Ref | Implementation | Test | Status |
 |-------------|----------|----------------|------|--------|
-| max_records_per_block limits | §2.1 | TBD | TBD | ❌ |
-| max_fields_per_block limits | §2.1 | TBD | TBD | ❌ |
-| max_segment_uncompressed_len | §2.1 | TBD | TBD | ❌ |
-| max_block_uncompressed_total | §2.1 | TBD | TBD | ❌ |
-| max_dict_entries_per_field | §2.1 | TBD | TBD | ❌ |
-| max_string_len_per_value | §2.1 | TBD | TBD | ❌ |
-| max_decimal_digits_per_value | §2.1 | TBD | TBD | ❌ |
-| max_presence_bytes_per_field | §2.1 | TBD | TBD | ❌ |
-| max_tag_stream_bytes_per_field | §2.1 | TBD | TBD | ❌ |
+| max_records_per_block limits | §2.1 | limits.rs, block.rs | block.rs tests | ✅ |
+| max_fields_per_block limits | §2.1 | limits.rs, block.rs | block.rs tests | ✅ |
+| max_segment_uncompressed_len | §2.1 | limits.rs, block.rs | block.rs tests | ✅ |
+| max_block_uncompressed_total | §2.1 | limits.rs | TBD | 🚧 |
+| max_dict_entries_per_field | §2.1 | limits.rs, block.rs | block.rs tests | ✅ |
+| max_string_len_per_value | §2.1 | limits.rs, block.rs | block.rs tests | ✅ |
+| max_decimal_digits_per_value | §2.1 | limits.rs, decimal.rs | decimal.rs tests | ✅ |
+| max_presence_bytes_per_field | §2.1 | limits.rs | TBD | 🚧 |
+| max_tag_stream_bytes_per_field | §2.1 | limits.rs | TBD | 🚧 |
 
 ## Test Vectors (§12)
 
@@ -89,18 +89,18 @@ This document tracks implementation status of JAC v1 Draft 0.9.1 specification r
 - [x] CI/CD pipeline setup
 - [x] Test data fixtures created
 
-### Phase 1 (Core Primitives) - ❌ Not Started
-- [ ] Constants and magic numbers
-- [ ] Variable-length integer encoding
-- [ ] Bit packing utilities
-- [ ] CRC32C checksums
-- [ ] Error types
-- [ ] Security limits
+### Phase 1 (Core Primitives) - ✅ Complete
+- [x] Constants and magic numbers
+- [x] Variable-length integer encoding
+- [x] Bit packing utilities
+- [x] CRC32C checksums
+- [x] Error types
+- [x] Security limits
 
-### Phase 2 (File & Block Structures) - ❌ Not Started
-- [ ] File header encoding/decoding
-- [ ] Block header and directory
-- [ ] Index footer (optional)
+### Phase 2 (File & Block Structures) - ✅ Complete
+- [x] File header encoding/decoding
+- [x] Block header and directory
+- [x] Index footer (optional)
 
 ### Phase 3 (Decimal & Type-Tag Support) - ❌ Not Started
 - [ ] Decimal type and encoding

@@ -330,7 +330,7 @@ jac unpack file.jac -o debug.ndjson --ndjson
 
 ## Current Status
 
-**Implementation Phase:** Phase 0 (Project Setup) - ✅ Complete
+**Implementation Phase:** Phase 2 (File & Block Structures) - ✅ Complete
 
 **Completed in Phase 0:**
 - ✅ Rust workspace initialized with proper crate topology
@@ -341,10 +341,29 @@ jac unpack file.jac -o debug.ndjson --ndjson
 - ✅ All crates compile successfully
 - ✅ CLI tool structure in place
 
+**Completed in Phase 1:**
+- ✅ Constants and magic numbers (`constants.rs`)
+- ✅ Variable-length integer encoding (`varint.rs`) - ULEB128 and ZigZag
+- ✅ Bit packing utilities (`bitpack.rs`) - Presence bitmaps and 3-bit tag packing
+- ✅ CRC32C checksums (`checksum.rs`)
+- ✅ Error types (`error.rs`) - Complete error enum with thiserror
+- ✅ Security limits (`limits.rs`) - All spec-defined limits
+- ✅ Type tag enum (`types.rs`) - 3-bit type tags with validation
+- ✅ Decimal encoding (`decimal.rs`) - Arbitrary-precision decimal support
+
+**Completed in Phase 2:**
+- ✅ File header encoding/decoding (`header.rs`) - With flag accessors and ULEB128
+- ✅ Block header and directory (`block.rs`) - With comprehensive limit enforcement
+- ✅ Index footer (`footer.rs`) - Optional footer with CRC32C verification
+- ✅ All structures use little-endian encoding as required by spec
+- ✅ Comprehensive test coverage (66 tests passing)
+- ✅ Limit enforcement working correctly
+- ✅ Error handling implemented and tested
+
 **Next Steps:**
-1. Begin Phase 1: Core primitives (varint, bitpack, CRC)
-2. Implement constants and magic numbers
-3. Add comprehensive unit tests
+1. Begin Phase 3: Decimal & Type-Tag Support (already partially complete)
+2. Begin Phase 4: Column Builder & Encoder (`jac-codec`)
+3. Implement field segment encoding and block building
 
 **Last Updated:** 2025-01-27
 
