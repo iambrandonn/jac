@@ -109,9 +109,7 @@ impl IndexFooter {
         let (block_count_u64, count_bytes) = decode_uleb128(&bytes[pos..index_body_end])?;
         pos += count_bytes;
         let block_count = usize::try_from(block_count_u64).map_err(|_| {
-            crate::error::JacError::LimitExceeded(
-                "block_count exceeds supported size".to_string(),
-            )
+            crate::error::JacError::LimitExceeded("block_count exceeds supported size".to_string())
         })?;
 
         // Decode block index entries

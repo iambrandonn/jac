@@ -4,9 +4,10 @@ use crate::CompressOpts;
 use jac_format::{
     bitpack::{PresenceBitmap, TagPacker},
     varint::{encode_uleb128, zigzag_encode},
-    Decimal, JacError, Result, TypeTag,
+    Decimal, JacError, Limits, Result, TypeTag,
 };
 use serde_json;
+use std::cmp::{max, min};
 use std::collections::HashMap;
 
 type DictionaryBuild = (Option<(Vec<String>, HashMap<String, usize>)>, bool);
@@ -34,11 +35,17 @@ pub struct ColumnBuilder {
     arrays: Vec<Vec<u8>>,
     /// Current position in present values
     present_idx: usize,
+    /// Security limits snapshot
+    limits: Limits,
+    /// Maximum dictionary entries permitted for this field
+    max_dict_entries: usize,
+    /// Canonicalize numbers flag
+    canonicalize_numbers: bool,
 }
 
 impl ColumnBuilder {
     /// Create new column builder
-    pub fn new(record_count: usize) -> Self {
+    pub fn new(record_count: usize, opts: &CompressOpts) -> Self {
         Self {
             record_count,
             presence: PresenceBitmap::new(record_count),
@@ -50,6 +57,9 @@ impl ColumnBuilder {
             objects: Vec::new(),
             arrays: Vec::new(),
             present_idx: 0,
+            limits: opts.limits.clone(),
+            max_dict_entries: opts.max_dict_entries,
+            canonicalize_numbers: opts.canonicalize_numbers,
         }
     }
 
@@ -84,13 +94,13 @@ impl ColumnBuilder {
                         self.ints.push(u as i64);
                     } else {
                         // u64 > i64::MAX, must use decimal
-                        let decimal = Decimal::from_str_exact(&n.to_string())?;
+                        let decimal = self.build_decimal(&n.to_string())?;
                         self.tags.push(TypeTag::Decimal);
                         self.decimals.push(decimal);
                     }
                 } else {
                     // f64 or non-integer, use decimal
-                    let decimal = Decimal::from_str_exact(&n.to_string())?;
+                    let decimal = self.build_decimal(&n.to_string())?;
                     self.tags.push(TypeTag::Decimal);
                     self.decimals.push(decimal);
                 }
@@ -99,7 +109,7 @@ impl ColumnBuilder {
             serde_json::Value::String(s) => {
                 self.presence.set_present(record_idx, true);
                 self.tags.push(TypeTag::String);
-                self.strings.push(s.clone());
+                self.push_string(s)?;
                 self.present_idx += 1;
             }
             serde_json::Value::Object(obj) => {
@@ -108,6 +118,7 @@ impl ColumnBuilder {
                 // Minify JSON
                 let minified = serde_json::to_vec(obj)
                     .map_err(|e| JacError::Internal(format!("JSON serialization failed: {}", e)))?;
+                self.ensure_string_len(minified.len())?;
                 self.objects.push(minified);
                 self.present_idx += 1;
             }
@@ -117,6 +128,7 @@ impl ColumnBuilder {
                 // Minify JSON
                 let minified = serde_json::to_vec(arr)
                     .map_err(|e| JacError::Internal(format!("JSON serialization failed: {}", e)))?;
+                self.ensure_string_len(minified.len())?;
                 self.arrays.push(minified);
                 self.present_idx += 1;
             }
@@ -126,7 +138,7 @@ impl ColumnBuilder {
     }
 
     /// Finalize column and create field segment
-    pub fn finalize(self, opts: &CompressOpts, record_count: usize) -> Result<FieldSegment> {
+    pub fn finalize(self, _opts: &CompressOpts, record_count: usize) -> Result<FieldSegment> {
         let mut trimmed_presence = PresenceBitmap::new(record_count);
         for idx in 0..record_count {
             if self.presence.is_present(idx) {
@@ -137,31 +149,49 @@ impl ColumnBuilder {
         let present_count = trimmed_presence.count_present();
 
         // Validate limits
-        if present_count > opts.limits.max_records_per_block {
+        if present_count > self.limits.max_records_per_block {
             return Err(JacError::LimitExceeded(
                 "Too many present values".to_string(),
             ));
         }
 
         // Build string dictionary if beneficial
-        let (dictionary_info, use_dict) = self.build_string_dictionary(opts)?;
+        let (dictionary_info, use_dict) = self.build_string_dictionary()?;
         let dict_entry_count = dictionary_info
             .as_ref()
             .map(|(entries, _)| entries.len())
             .unwrap_or(0);
 
+        if dict_entry_count > self.limits.max_dict_entries_per_field {
+            return Err(JacError::LimitExceeded(
+                "Dictionary entry count exceeds limit".to_string(),
+            ));
+        }
+
         // Build uncompressed payload in spec order (§4.7)
         let mut payload = Vec::new();
 
         // 1. Presence bitmap
-        payload.extend_from_slice(&trimmed_presence.to_bytes());
+        let presence_bytes = trimmed_presence.to_bytes();
+        if presence_bytes.len() > self.limits.max_presence_bytes {
+            return Err(JacError::LimitExceeded(
+                "Presence bytes exceed limit".to_string(),
+            ));
+        }
+        payload.extend_from_slice(&presence_bytes);
 
         // 2. Type tag stream (3-bit packed)
         let mut tag_packer = TagPacker::new();
         for tag in &self.tags {
             tag_packer.push(*tag as u8);
         }
-        payload.extend_from_slice(&tag_packer.finish());
+        let tag_bytes = tag_packer.finish();
+        if tag_bytes.len() > self.limits.max_tag_bytes {
+            return Err(JacError::LimitExceeded(
+                "Tag bytes exceed limit".to_string(),
+            ));
+        }
+        payload.extend_from_slice(&tag_bytes);
 
         // 3. String dictionary (if using dictionary encoding)
         if use_dict {
@@ -259,7 +289,7 @@ impl ColumnBuilder {
     }
 
     /// Build string dictionary if beneficial
-    fn build_string_dictionary(&self, opts: &CompressOpts) -> Result<DictionaryBuild> {
+    fn build_string_dictionary(&self) -> Result<DictionaryBuild> {
         if self.strings.is_empty() {
             return Ok((None, false));
         }
@@ -277,10 +307,15 @@ impl ColumnBuilder {
         }
 
         let distinct_count = dict_entries.len();
-        let threshold = std::cmp::min(
-            opts.max_dict_entries,
-            std::cmp::max(2, self.strings.len() / 4),
+        let dict_limit = min(
+            self.max_dict_entries,
+            self.limits.max_dict_entries_per_field,
         );
+        if dict_limit == 0 {
+            return Ok((None, false));
+        }
+
+        let threshold = min(dict_limit, max(2, self.strings.len() / 8));
 
         if distinct_count <= threshold {
             Ok((Some((dict_entries, dict_map)), true))
@@ -295,16 +330,78 @@ impl ColumnBuilder {
             return false;
         }
 
-        // Check if sequence is monotonic increasing
-        let mut increasing_count = 0;
         for i in 1..ints.len() {
-            if ints[i] > ints[i - 1] {
-                increasing_count += 1;
+            if ints[i] <= ints[i - 1] {
+                return false;
             }
         }
 
-        let increasing_ratio = increasing_count as f64 / (ints.len() - 1) as f64;
-        increasing_ratio >= 0.95
+        let mut min_delta = i64::MAX;
+        let mut max_delta = i64::MIN;
+        for i in 1..ints.len() {
+            let delta = ints[i] - ints[i - 1];
+            min_delta = min(min_delta, delta);
+            max_delta = max(max_delta, delta);
+        }
+
+        let first = *ints.first().unwrap() as i128;
+        let last = *ints.last().unwrap() as i128;
+        let range = last - first;
+        if range == 0 {
+            return false;
+        }
+
+        let delta_span = (max_delta as i128) - (min_delta as i128);
+        let delta_ratio = delta_span as f64 / range as f64;
+        delta_ratio < 0.5
+    }
+
+    fn ensure_string_len(&self, len: usize) -> Result<()> {
+        if len > self.limits.max_string_len_per_value {
+            Err(JacError::LimitExceeded(
+                "String length exceeds limit".to_string(),
+            ))
+        } else {
+            Ok(())
+        }
+    }
+
+    fn push_string(&mut self, value: &str) -> Result<()> {
+        self.ensure_string_len(value.len())?;
+        self.strings.push(value.to_string());
+        Ok(())
+    }
+
+    fn build_decimal(&self, source: &str) -> Result<Decimal> {
+        let mut decimal = Decimal::from_str_exact(source)?;
+        self.ensure_decimal_limit(&decimal)?;
+
+        if self.canonicalize_numbers {
+            self.trim_decimal_trailing_zeros(&mut decimal);
+            self.ensure_decimal_limit(&decimal)?;
+        }
+
+        Ok(decimal)
+    }
+
+    fn ensure_decimal_limit(&self, decimal: &Decimal) -> Result<()> {
+        if decimal.digits.len() > self.limits.max_decimal_digits_per_value {
+            Err(JacError::LimitExceeded(
+                "Decimal digit count exceeds limit".to_string(),
+            ))
+        } else {
+            Ok(())
+        }
+    }
+
+    fn trim_decimal_trailing_zeros(&self, decimal: &mut Decimal) {
+        while decimal.digits.len() > 1
+            && decimal.digits.last() == Some(&b'0')
+            && decimal.exponent < i32::MAX
+        {
+            decimal.digits.pop();
+            decimal.exponent += 1;
+        }
     }
 }
 
@@ -351,12 +448,12 @@ impl FieldSegment {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+    use serde_json::{json, Number};
 
     #[test]
     fn test_column_builder_basic() {
-        let mut builder = ColumnBuilder::new(3);
         let opts = CompressOpts::default();
+        let mut builder = ColumnBuilder::new(3, &opts);
 
         // Add some test values
         builder.add_value(0, &json!(42)).unwrap();
@@ -370,8 +467,8 @@ mod tests {
 
     #[test]
     fn test_column_builder_mixed_types() {
-        let mut builder = ColumnBuilder::new(5);
         let opts = CompressOpts::default();
+        let mut builder = ColumnBuilder::new(5, &opts);
 
         // Add mixed types
         builder.add_value(0, &json!(true)).unwrap();
@@ -387,8 +484,8 @@ mod tests {
 
     #[test]
     fn test_column_builder_dictionary_encoding() {
-        let mut builder = ColumnBuilder::new(8);
         let opts = CompressOpts::default();
+        let mut builder = ColumnBuilder::new(8, &opts);
 
         // Add repeated strings to trigger dictionary encoding
         // With 8 strings and 2 distinct values, threshold = min(4096, 8/8) = 1
@@ -409,8 +506,8 @@ mod tests {
 
     #[test]
     fn test_column_builder_delta_encoding() {
-        let mut builder = ColumnBuilder::new(5);
         let opts = CompressOpts::default();
+        let mut builder = ColumnBuilder::new(5, &opts);
 
         // Add monotonic integers to trigger delta encoding
         builder.add_value(0, &json!(1000)).unwrap();
@@ -426,8 +523,8 @@ mod tests {
 
     #[test]
     fn test_column_builder_objects_and_arrays() {
-        let mut builder = ColumnBuilder::new(2);
         let opts = CompressOpts::default();
+        let mut builder = ColumnBuilder::new(2, &opts);
 
         // Add object and array
         builder.add_value(0, &json!({"key": "value"})).unwrap();
@@ -440,8 +537,8 @@ mod tests {
 
     #[test]
     fn test_column_builder_large_integers() {
-        let mut builder = ColumnBuilder::new(2);
         let opts = CompressOpts::default();
+        let mut builder = ColumnBuilder::new(2, &opts);
 
         // Test large integers that should use decimal encoding
         builder.add_value(0, &json!(i64::MAX)).unwrap();
@@ -450,5 +547,83 @@ mod tests {
         let segment = builder.finalize(&opts, 2).unwrap();
         assert_eq!(segment.value_count_present, 2);
         assert!(!segment.uncompressed_payload.is_empty());
+    }
+
+    #[test]
+    fn test_column_builder_canonicalizes_decimals_when_enabled() {
+        let mut opts = CompressOpts::default();
+        opts.canonicalize_numbers = true;
+        let mut builder = ColumnBuilder::new(1, &opts);
+
+        let number: Number = "1.2300".parse().unwrap();
+        builder
+            .add_value(0, &serde_json::Value::Number(number))
+            .unwrap();
+
+        let segment = builder.finalize(&opts, 1).unwrap();
+        let presence_len = (1 + 7) >> 3;
+        let tag_len = ((3 * segment.value_count_present) + 7) >> 3;
+        let start = presence_len + tag_len;
+        let (decimal, consumed) = Decimal::decode(&segment.uncompressed_payload[start..]).unwrap();
+        assert!(consumed > 0);
+        assert_eq!(decimal.to_json_string(), "1.23");
+    }
+
+    #[test]
+    fn test_column_builder_string_length_limit_enforced() {
+        let mut opts = CompressOpts::default();
+        opts.limits.max_string_len_per_value = 4;
+        let mut builder = ColumnBuilder::new(1, &opts);
+
+        let err = builder.add_value(0, &json!("hello"));
+        assert!(matches!(err, Err(JacError::LimitExceeded(_))));
+    }
+
+    #[test]
+    fn test_column_builder_decimal_digit_limit_enforced() {
+        let mut opts = CompressOpts::default();
+        opts.limits.max_decimal_digits_per_value = 3;
+        let mut builder = ColumnBuilder::new(1, &opts);
+
+        let decimal_value: serde_json::Value = serde_json::from_str("1234.5").unwrap();
+        let err = builder.add_value(0, &decimal_value);
+        assert!(matches!(err, Err(JacError::LimitExceeded(_))));
+    }
+
+    #[test]
+    fn test_column_builder_dictionary_threshold_falls_back_to_raw() {
+        let opts = CompressOpts::default();
+        let mut builder = ColumnBuilder::new(9, &opts);
+
+        for idx in 0..9 {
+            builder
+                .add_value(idx, &json!(format!("value{}", idx)))
+                .unwrap();
+        }
+
+        let segment = builder.finalize(&opts, 9).unwrap();
+        assert_eq!(segment.encoding_flags & 1, 0);
+    }
+
+    #[test]
+    fn test_column_builder_presence_limit_enforced() {
+        let mut opts = CompressOpts::default();
+        opts.limits.max_presence_bytes = 0;
+        let mut builder = ColumnBuilder::new(1, &opts);
+        builder.add_value(0, &json!(true)).unwrap();
+
+        let err = builder.finalize(&opts, 1).unwrap_err();
+        assert!(matches!(err, JacError::LimitExceeded(msg) if msg.contains("Presence bytes")));
+    }
+
+    #[test]
+    fn test_column_builder_tag_limit_enforced() {
+        let mut opts = CompressOpts::default();
+        opts.limits.max_tag_bytes = 0;
+        let mut builder = ColumnBuilder::new(1, &opts);
+        builder.add_value(0, &json!(true)).unwrap();
+
+        let err = builder.finalize(&opts, 1).unwrap_err();
+        assert!(matches!(err, JacError::LimitExceeded(msg) if msg.contains("Tag bytes")));
     }
 }

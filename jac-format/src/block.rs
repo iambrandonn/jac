@@ -112,9 +112,7 @@ impl BlockHeader {
         let (record_count_u64, count_bytes) = decode_uleb128(&bytes[pos..header_body_end])?;
         pos += count_bytes;
         let record_count = usize::try_from(record_count_u64).map_err(|_| {
-            crate::error::JacError::LimitExceeded(
-                "record_count exceeds supported size".to_string(),
-            )
+            crate::error::JacError::LimitExceeded("record_count exceeds supported size".to_string())
         })?;
 
         // Enforce record count limit
@@ -129,9 +127,7 @@ impl BlockHeader {
         let (field_count_u64, field_count_bytes) = decode_uleb128(&bytes[pos..header_body_end])?;
         pos += field_count_bytes;
         let field_count = usize::try_from(field_count_u64).map_err(|_| {
-            crate::error::JacError::LimitExceeded(
-                "field_count exceeds supported size".to_string(),
-            )
+            crate::error::JacError::LimitExceeded("field_count exceeds supported size".to_string())
         })?;
 
         // Enforce field count limit
@@ -191,7 +187,8 @@ impl BlockHeader {
             pos += 1;
 
             // Presence bytes (ULEB128)
-            let (presence_bytes_u64, presence_bytes_len) = decode_uleb128(&bytes[pos..header_body_end])?;
+            let (presence_bytes_u64, presence_bytes_len) =
+                decode_uleb128(&bytes[pos..header_body_end])?;
             pos += presence_bytes_len;
             let presence_bytes = usize::try_from(presence_bytes_u64).map_err(|_| {
                 crate::error::JacError::LimitExceeded(
@@ -234,7 +231,8 @@ impl BlockHeader {
             }
 
             // Encoding flags (ULEB128)
-            let (encoding_flags, encoding_flags_len) = decode_uleb128(&bytes[pos..header_body_end])?;
+            let (encoding_flags, encoding_flags_len) =
+                decode_uleb128(&bytes[pos..header_body_end])?;
             pos += encoding_flags_len;
 
             // Dictionary entry count (ULEB128)
@@ -597,7 +595,9 @@ mod tests {
 
         let encoded = header.encode().unwrap();
         let result = BlockHeader::decode(&encoded, &limits);
-        assert!(matches!(result, Err(JacError::LimitExceeded(msg)) if msg.contains("Presence bytes")));
+        assert!(
+            matches!(result, Err(JacError::LimitExceeded(msg)) if msg.contains("Presence bytes"))
+        );
     }
 
     #[test]

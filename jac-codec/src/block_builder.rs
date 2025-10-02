@@ -48,10 +48,12 @@ impl BlockBuilder {
             }
 
             // Get or create column builder for this field
+            let block_target_records = self.opts.block_target_records;
+            let opts_clone = self.opts.clone();
             let column_builder = self
                 .column_builders
                 .entry(field_name.clone())
-                .or_insert_with(|| ColumnBuilder::new(self.opts.block_target_records));
+                .or_insert_with(move || ColumnBuilder::new(block_target_records, &opts_clone));
 
             // Add value to column
             column_builder.add_value(record_idx, value)?;
@@ -187,8 +189,8 @@ pub struct BlockData {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
     use crate::Codec;
+    use serde_json::json;
 
     #[test]
     fn test_block_builder_basic() {

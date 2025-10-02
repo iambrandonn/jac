@@ -374,13 +374,7 @@ mod tests {
 
     #[test]
     fn test_decimal_roundtrip_extremes() {
-        let cases = vec![
-            "0",
-            "0.1",
-            "1e-20",
-            "1e300",
-            "-123.456e10",
-        ];
+        let cases = vec!["0", "0.1", "1e-20", "1e300", "-123.456e10"];
 
         for input in cases {
             let decimal = Decimal::from_str_exact(input).unwrap();
@@ -468,7 +462,10 @@ mod tests {
         // exponent = 0
         bytes.extend_from_slice(&encode_uleb128(zigzag_encode(0)));
 
-        assert!(matches!(Decimal::decode(&bytes), Err(crate::error::JacError::CorruptBlock)));
+        assert!(matches!(
+            Decimal::decode(&bytes),
+            Err(crate::error::JacError::CorruptBlock)
+        ));
     }
 
     #[test]
@@ -482,7 +479,10 @@ mod tests {
         let exp = (i32::MAX as i64) + 1;
         bytes.extend_from_slice(&encode_uleb128(zigzag_encode(exp)));
 
-        assert!(matches!(Decimal::decode(&bytes), Err(crate::error::JacError::CorruptBlock)));
+        assert!(matches!(
+            Decimal::decode(&bytes),
+            Err(crate::error::JacError::CorruptBlock)
+        ));
     }
 
     #[test]
@@ -495,7 +495,10 @@ mod tests {
         let exp = (i32::MIN as i64) - 1;
         bytes.extend_from_slice(&encode_uleb128(zigzag_encode(exp)));
 
-        assert!(matches!(Decimal::decode(&bytes), Err(crate::error::JacError::CorruptBlock)));
+        assert!(matches!(
+            Decimal::decode(&bytes),
+            Err(crate::error::JacError::CorruptBlock)
+        ));
     }
 
     #[test]
