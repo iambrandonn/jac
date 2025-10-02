@@ -131,12 +131,12 @@ impl Decimal {
         }
 
         // Use a more precise string representation to check exactness
-        let s = format!("{:.17}", val);
+        let s = val.to_string();
         let decimal = Self::from_str_exact(&s).ok()?;
 
         // Check if round-trip is exact by converting back to f64
         let back_to_f64 = decimal.to_f64_if_exact()?;
-        if (back_to_f64 - val).abs() < f64::EPSILON {
+        if back_to_f64.to_bits() == val.to_bits() {
             Some(decimal)
         } else {
             None
@@ -147,8 +147,9 @@ impl Decimal {
     pub fn to_f64_if_exact(&self) -> Option<f64> {
         let json_str = self.to_json_string();
         json_str.parse::<f64>().ok().and_then(|f| {
-            // Check if round-trip is exact
-            if Self::from_str_exact(&json_str).ok()? == *self {
+            let canonical = format!("{:.17}", f);
+            let reparsed = Self::from_str_exact(&canonical).ok()?;
+            if reparsed == *self {
                 Some(f)
             } else {
                 None
@@ -171,11 +172,14 @@ impl Decimal {
         // Use scientific notation for large exponents
         if self.exponent.abs() > 6 {
             result.push_str(&String::from_utf8_lossy(&self.digits));
+            let mut exponent = self.exponent as i64;
             if self.digits.len() > 1 {
-                result.insert(1, '.');
+                let insert_pos = if self.sign { 2 } else { 1 };
+                result.insert(insert_pos, '.');
+                exponent += (self.digits.len() as i64) - 1;
             }
             result.push('e');
-            result.push_str(&self.exponent.to_string());
+            result.push_str(&exponent.to_string());
         } else {
             // Regular decimal notation
             if self.exponent >= 0 {
@@ -288,6 +292,7 @@ impl Decimal {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::varint::{encode_uleb128, zigzag_encode};
 
     #[test]
     fn test_decimal_from_str_basic() {
@@ -368,6 +373,29 @@ mod tests {
     }
 
     #[test]
+    fn test_decimal_roundtrip_extremes() {
+        let cases = vec![
+            "0",
+            "0.1",
+            "1e-20",
+            "1e300",
+            "-123.456e10",
+        ];
+
+        for input in cases {
+            let decimal = Decimal::from_str_exact(input).unwrap();
+            let encoded = decimal.encode().unwrap();
+            let (decoded, consumed) = Decimal::decode(&encoded).unwrap();
+            assert_eq!(decoded, decimal);
+            assert_eq!(consumed, encoded.len());
+
+            let json = decimal.to_json_string();
+            let reparsed = Decimal::from_str_exact(&json).unwrap();
+            assert_eq!(reparsed, decimal);
+        }
+    }
+
+    #[test]
     fn test_decimal_encode_decode() {
         let cases = vec!["0", "123", "-123", "0.5", "-0.5", "1e3", "-1e3"];
 
@@ -402,6 +430,72 @@ mod tests {
         // Test digit count limit
         let too_many_digits = "1".repeat(65537);
         assert!(Decimal::from_str_exact(&too_many_digits).is_err());
+    }
+
+    #[test]
+    fn test_decimal_allows_max_digits() {
+        let max_digits = "1".repeat(65_536);
+        let decimal = Decimal::from_str_exact(&max_digits).unwrap();
+        assert_eq!(decimal.digits.len(), 65_536);
+        let encoded = decimal.encode().unwrap();
+        let (decoded, consumed) = Decimal::decode(&encoded).unwrap();
+        assert_eq!(decoded, decimal);
+        assert_eq!(consumed, encoded.len());
+    }
+
+    #[test]
+    fn test_decimal_from_str_trims_leading_zero() {
+        let decimal = Decimal::from_str_exact("0123").unwrap();
+        assert_eq!(decimal.digits, vec![b'1', b'2', b'3']);
+        assert_eq!(decimal.exponent, 0);
+    }
+
+    #[test]
+    fn test_decimal_negative_zero_is_normalized() {
+        let decimal = Decimal::from_str_exact("-0").unwrap();
+        assert!(!decimal.sign, "zero must be stored as non-negative");
+        assert_eq!(decimal.digits, vec![b'0']);
+    }
+
+    #[test]
+    fn test_decimal_decode_invalid_sign() {
+        let mut bytes = Vec::new();
+        // Invalid sign byte (2)
+        bytes.push(2);
+        // digits length = 1
+        bytes.extend_from_slice(&encode_uleb128(1));
+        bytes.push(b'0');
+        // exponent = 0
+        bytes.extend_from_slice(&encode_uleb128(zigzag_encode(0)));
+
+        assert!(matches!(Decimal::decode(&bytes), Err(crate::error::JacError::CorruptBlock)));
+    }
+
+    #[test]
+    fn test_decimal_decode_exponent_out_of_range() {
+        let mut bytes = Vec::new();
+        bytes.push(0); // sign
+        bytes.extend_from_slice(&encode_uleb128(1)); // digits len
+        bytes.push(b'1');
+
+        // Exponent = i64::from(i32::MAX) + 1 → should overflow allowed range
+        let exp = (i32::MAX as i64) + 1;
+        bytes.extend_from_slice(&encode_uleb128(zigzag_encode(exp)));
+
+        assert!(matches!(Decimal::decode(&bytes), Err(crate::error::JacError::CorruptBlock)));
+    }
+
+    #[test]
+    fn test_decimal_decode_exponent_underflow() {
+        let mut bytes = Vec::new();
+        bytes.push(0); // sign
+        bytes.extend_from_slice(&encode_uleb128(1)); // digits len
+        bytes.push(b'1');
+
+        let exp = (i32::MIN as i64) - 1;
+        bytes.extend_from_slice(&encode_uleb128(zigzag_encode(exp)));
+
+        assert!(matches!(Decimal::decode(&bytes), Err(crate::error::JacError::CorruptBlock)));
     }
 
     #[test]
