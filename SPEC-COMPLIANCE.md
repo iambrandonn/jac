@@ -138,9 +138,13 @@ This document tracks implementation status of JAC v1 Draft 0.9.1 specification r
 - [x] Writer/reader enhancements
 - [x] Progress reporting and metrics
 
-### Phase 8 (CLI Tool) - 🚧 In Progress
+### Phase 8 (CLI Tool) - ✅ Complete
 - [x] CLI commands (pack, unpack)
-- [ ] CLI commands (ls, cat)
+- [x] CLI commands (ls, cat) with table/JSON output, block filtering, and projection streaming
+- [x] Progress spinners and verbose summaries for pack/unpack/cat/ls
+- [x] Detailed field statistics via `--stats` (per-field type/null/absent breakdown)
+- [x] CLI integration tests (`jac-cli/tests/cli.rs`)
+- [x] Throughput and timing metrics for progress reporting (verbose mode)
 
 ### Phase 9 (Testing & Validation) - ❌ Not Started
 - [ ] Conformance tests

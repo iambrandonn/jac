@@ -30,16 +30,21 @@ cargo install jac-cli
 
 ```bash
 # Compress NDJSON to JAC format
-jac pack input.ndjson -o output.jac
+jac pack input.ndjson -o output.jac --progress
 
 # Decompress JAC to NDJSON
-jac unpack output.jac -o decompressed.ndjson --ndjson
+jac unpack output.jac -o decompressed.ndjson --ndjson --progress
 
-# List blocks and fields
+# List blocks and fields (table or JSON)
 jac ls output.jac
+jac ls output.jac --format json --verbose
 
-# Extract specific field values
+# Extract specific field values (NDJSON/JSON-array/CSV)
 jac cat output.jac --field userId
+jac cat output.jac --field userId --format csv --blocks 2-5
+
+# Compute detailed statistics
+jac ls output.jac --format json --stats
 ```
 
 ### Library Usage
@@ -62,6 +67,20 @@ let input = std::fs::File::open("output.jac")?;
 let output = std::fs::File::create("projected.ndjson")?;
 project(input, output, &["userId", "timestamp"], true)?;
 ```
+
+### CLI Overview
+
+| Command | Purpose | Key Flags |
+|---------|---------|-----------|
+| `jac pack` | Compress NDJSON/JSON into `.jac` | `--block-records`, `--zstd-level`, `--ndjson`, `--json-array`, `--progress` |
+| `jac unpack` | Decompress `.jac` back to JSON | `--ndjson`, `--json-array`, `--progress` |
+| `jac ls` | Inspect blocks and field statistics | `--format {table,json}`, `--verbose`, `--fields-only`, `--blocks-only` |
+| `jac ls --stats` | Opt-in deep field analysis (samples ≤50k values/field) | `--stats`, `--verbose` |
+| `jac cat` | Stream values for a field | `--field <name>`, `--format {ndjson,json-array,csv}`, `--blocks <range>`, `--progress` |
+
+`jac ls` surfaces per-block summaries including field presence counts and compression ratios, while `jac cat` streams projected values without loading entire blocks, optionally showing progress for long-running reads.
+
+> **Sampling note:** `jac ls --stats` inspects up to 50k values per field when computing type distribution metrics to avoid re-reading massive segments; verbose output and JSON/table stats will indicate when sampling occurred.
 
 ## Architecture
 
@@ -93,14 +112,14 @@ JAC enforces strict limits to prevent decompression bombs:
 
 ## Development Status
 
-**Current Phase:** Phase 0 (Project Setup) - ✅ Complete
+**Current Phase:** Phase 8 (CLI Tool Completion) – polishing progress/stats UX
 
-**Next Steps:**
-- Phase 1: Core primitives (varint, bitpack, CRC)
-- Phase 2: File & block structures
-- Phase 3: Decimal & type-tag support
+- ✅ Phases 0–7 delivered core format, codec, I/O, and request-based APIs
+- ✅ Phase 8 Week 1: `jac ls` / `jac cat` implemented with field statistics, block filtering, and progress spinners
+- ✅ Phase 8 Week 2: progress/timing summaries for pack/unpack/cat/ls, sampling-aware `--stats` output, refreshed docs & tests
+- 🔜 Next: CLI doc polish & configuration knobs for stats sampling, then move to benchmarking (see [PLAN8.md](PLAN8.md))
 
-See [PLAN.md](PLAN.md) for the complete implementation roadmap.
+See [PLAN.md](PLAN.md) for the complete roadmap and phase breakdown.
 
 ## Contributing
 
@@ -115,4 +134,3 @@ Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for detai
 - [Zstandard](https://github.com/facebook/zstd) - Fast compression algorithm
 - [Parquet](https://parquet.apache.org/) - Columnar storage format
 - [MessagePack](https://msgpack.org/) - Binary serialization format
-

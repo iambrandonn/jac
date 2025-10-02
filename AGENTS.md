@@ -363,7 +363,7 @@ jac unpack file.jac -o debug.ndjson --ndjson
 
 ## Current Status
 
-**Implementation Phase:** Phase 7 (High-Level API & Streaming) - ✅ Complete
+**Implementation Phase:** Phase 8 (CLI Tool Completion) – 🚧 In Progress
 
 **Completed in Phase 0:**
 - ✅ Rust workspace initialized with proper crate topology
@@ -451,9 +451,16 @@ jac unpack file.jac -o debug.ndjson --ndjson
 - ✅ Test coverage: 133 total tests passing (2 CLI + 34 codec + 84 format + 4 io + 9 integration)
 - ✅ Feature flags: `async` feature properly configured with optional dependencies
 
-**Next Steps:**
-1. Begin Phase 8: CLI Tool completion (`jac-cli`) - implement `ls` and `cat` commands
-2. Add advanced CLI features: progress bars, verbose output, field statistics
-3. Performance optimization: benchmarks and profiling for large datasets
+**Completed in Phase 8 (Week 1):**
+- ✅ `jac ls` command with table/JSON output, field statistics, and HashSet dedupe (`jac-cli/src/main.rs`)
+- ✅ `jac cat` command with block range filtering, CSV/JSON support, and progress spinner hooks (`jac-cli/src/main.rs`)
+- ✅ CLI unit and integration coverage for ls/cat flows (`jac-cli/tests/cli.rs`)
+- ✅ Progress spinners for pack/unpack/cat/ls plus verbose stderr summaries
+- ✅ `--stats` flag delivering per-field null/absent/type breakdowns (`jac-cli/src/main.rs`, `jac-cli/tests/cli.rs`)
 
-**Last Updated:** 2025-02-17 (Phase 7 Complete)
+**Upcoming Focus (Phase 8 Week 2+):**
+1. Investigate configurable sampling strategies for extreme `--stats` workloads (reuse cached projections, expose limit flag)
+2. Polish CLI docs/help text (README/manpages) and align SPEC references (CLI usage, --progress examples)
+3. Prep for Phase 9 benchmarking and broader conformance/fuzz testing once remaining docs/polish land
+
+**Last Updated:** 2025-02-18 (Phase 8 – Week 2 progress: throughput metrics & stats sampling)

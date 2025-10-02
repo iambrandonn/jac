@@ -17,7 +17,12 @@ jac-codec = { path = "../jac-codec" }
 jac-io = { path = "../jac-io" }
 clap.workspace = true
 thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+indicatif.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
-serde_json.workspace = true
+assert_cmd = "2.0"
+predicates = "3.1"
+tempfile = "3.10"
