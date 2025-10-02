@@ -63,4 +63,13 @@ mod tests {
         let crc2 = compute_crc32c(data2);
         assert_ne!(crc1, crc2);
     }
+
+    #[test]
+    fn test_crc32c_known_vector() {
+        // Reference vector from Castagnoli CRC32C examples: "123456789" => 0xE3069283
+        let data = b"123456789";
+        let crc = compute_crc32c(data);
+        assert_eq!(crc, 0xE306_9283);
+        assert!(verify_crc32c(data, 0xE306_9283).is_ok());
+    }
 }

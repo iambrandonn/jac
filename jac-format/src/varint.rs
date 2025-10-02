@@ -53,6 +53,7 @@ pub fn zigzag_decode(u: u64) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     #[test]
     fn test_uleb128_roundtrip() {
@@ -63,6 +64,23 @@ mod tests {
             let (decoded, bytes_consumed) = decode_uleb128(&encoded).unwrap();
             assert_eq!(val, decoded);
             assert_eq!(bytes_consumed, encoded.len());
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn prop_uleb128_roundtrip(value in any::<u64>()) {
+            let encoded = encode_uleb128(value);
+            let (decoded, consumed) = decode_uleb128(&encoded).unwrap();
+            prop_assert_eq!(decoded, value);
+            prop_assert!(consumed <= 10, "encoded length should be <= 10 bytes");
+        }
+
+        #[test]
+        fn prop_zigzag_roundtrip(value in any::<i64>()) {
+            let encoded = zigzag_encode(value);
+            let decoded = zigzag_decode(encoded);
+            prop_assert_eq!(decoded, value);
         }
     }
 

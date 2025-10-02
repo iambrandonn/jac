@@ -41,3 +41,31 @@ impl FieldSegment {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_segment() -> FieldSegment {
+        FieldSegment {
+            uncompressed_payload: b"payload".to_vec(),
+            encoding_flags: 0,
+            dict_entry_count: 0,
+            value_count_present: 0,
+        }
+    }
+
+    #[test]
+    fn test_compress_brotli_returns_unsupported() {
+        let segment = sample_segment();
+        let err = segment.compress(2, 4).unwrap_err();
+        assert!(matches!(err, JacError::UnsupportedCompression(2)));
+    }
+
+    #[test]
+    fn test_compress_deflate_returns_unsupported() {
+        let segment = sample_segment();
+        let err = segment.compress(3, 4).unwrap_err();
+        assert!(matches!(err, JacError::UnsupportedCompression(3)));
+    }
+}

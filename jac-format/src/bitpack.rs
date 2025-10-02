@@ -121,6 +121,7 @@ impl Iterator for TagUnpacker {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     #[test]
     fn test_presence_bitmap_basic() {
@@ -252,5 +253,42 @@ mod tests {
     fn test_tag_packer_invalid_tag() {
         let mut packer = TagPacker::new();
         packer.push(8); // Should panic
+    }
+
+    proptest! {
+        #[test]
+        fn prop_presence_roundtrip(bools in proptest::collection::vec(any::<bool>(), 0..512)) {
+            let bitmap = PresenceBitmap::from_bools(&bools);
+            let bytes = bitmap.to_bytes();
+            let restored = PresenceBitmap::from_bytes(&bytes, bools.len());
+
+            for (idx, expected) in bools.iter().enumerate() {
+                prop_assert_eq!(restored.is_present(idx), *expected);
+            }
+        }
+
+        #[test]
+        fn prop_tag_roundtrip(tags in proptest::collection::vec(0u8..=6, 0..256)) {
+            let mut packer = TagPacker::new();
+            for tag in &tags {
+                packer.push(*tag);
+            }
+            let bytes = packer.finish();
+            let unpacker = TagUnpacker::new(&bytes, tags.len());
+            let unpacked: Vec<u8> = unpacker.collect();
+
+            prop_assert_eq!(unpacked, tags);
+        }
+
+        #[test]
+        fn prop_boolean_bitpacking_roundtrip(bools in proptest::collection::vec(any::<bool>(), 0..512)) {
+            let bitmap = PresenceBitmap::from_bools(&bools);
+            let bytes = bitmap.to_bytes();
+            let mut bitvec = bitvec::prelude::BitVec::<u8, Lsb0>::from_slice(&bytes);
+            bitvec.truncate(bools.len());
+            let restored: Vec<bool> = bitvec.iter().map(|bit| *bit).collect();
+
+            prop_assert_eq!(restored, bools);
+        }
     }
 }

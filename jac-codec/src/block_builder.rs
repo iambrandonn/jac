@@ -188,6 +188,7 @@ pub struct BlockData {
 mod tests {
     use super::*;
     use serde_json::json;
+    use crate::Codec;
 
     #[test]
     fn test_block_builder_basic() {
@@ -278,6 +279,34 @@ mod tests {
             .map(|f| &f.field_name)
             .collect();
         assert_eq!(field_names, vec!["apple", "banana", "zebra"]);
+    }
+
+    #[test]
+    fn test_block_builder_unsupported_brotli_codec() {
+        let mut opts = CompressOpts::default();
+        opts.default_codec = Codec::Brotli(11);
+        let mut builder = BlockBuilder::new(opts);
+
+        let mut record = serde_json::Map::new();
+        record.insert("value".to_string(), json!(1));
+        builder.add_record(record).unwrap();
+
+        let err = builder.finalize().unwrap_err();
+        assert!(matches!(err, JacError::UnsupportedCompression(2)));
+    }
+
+    #[test]
+    fn test_block_builder_unsupported_deflate_codec() {
+        let mut opts = CompressOpts::default();
+        opts.default_codec = Codec::Deflate(6);
+        let mut builder = BlockBuilder::new(opts);
+
+        let mut record = serde_json::Map::new();
+        record.insert("value".to_string(), json!(1));
+        builder.add_record(record).unwrap();
+
+        let err = builder.finalize().unwrap_err();
+        assert!(matches!(err, JacError::UnsupportedCompression(3)));
     }
 
     #[test]
