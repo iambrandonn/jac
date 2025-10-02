@@ -37,3 +37,50 @@ impl TypeTag {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_type_tag_from_u8_valid() {
+        let cases = vec![
+            (0, TypeTag::Null),
+            (1, TypeTag::Bool),
+            (2, TypeTag::Int),
+            (3, TypeTag::Decimal),
+            (4, TypeTag::String),
+            (5, TypeTag::Object),
+            (6, TypeTag::Array),
+        ];
+
+        for (val, expected) in cases {
+            assert_eq!(TypeTag::from_u8(val).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn test_type_tag_from_u8_reserved() {
+        assert!(TypeTag::from_u8(7).is_err());
+        if let Err(crate::error::JacError::UnsupportedFeature(msg)) = TypeTag::from_u8(7) {
+            assert!(msg.contains("Reserved type tag 7"));
+        }
+    }
+
+    #[test]
+    fn test_type_tag_from_u8_invalid() {
+        assert!(TypeTag::from_u8(8).is_err());
+        assert!(TypeTag::from_u8(255).is_err());
+    }
+
+    #[test]
+    fn test_type_tag_values() {
+        assert_eq!(TypeTag::Null as u8, 0);
+        assert_eq!(TypeTag::Bool as u8, 1);
+        assert_eq!(TypeTag::Int as u8, 2);
+        assert_eq!(TypeTag::Decimal as u8, 3);
+        assert_eq!(TypeTag::String as u8, 4);
+        assert_eq!(TypeTag::Object as u8, 5);
+        assert_eq!(TypeTag::Array as u8, 6);
+    }
+}
+

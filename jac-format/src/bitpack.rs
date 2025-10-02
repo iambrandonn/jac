@@ -97,3 +97,140 @@ impl Iterator for TagUnpacker {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_presence_bitmap_basic() {
+        let mut bitmap = PresenceBitmap::new(10);
+
+        // Initially all absent
+        for i in 0..10 {
+            assert!(!bitmap.is_present(i));
+        }
+
+        // Set some present
+        bitmap.set_present(0, true);
+        bitmap.set_present(5, true);
+        bitmap.set_present(9, true);
+
+        assert!(bitmap.is_present(0));
+        assert!(!bitmap.is_present(1));
+        assert!(!bitmap.is_present(4));
+        assert!(bitmap.is_present(5));
+        assert!(!bitmap.is_present(8));
+        assert!(bitmap.is_present(9));
+    }
+
+    #[test]
+    fn test_presence_bitmap_roundtrip() {
+        let mut bitmap = PresenceBitmap::new(100);
+
+        // Set every 3rd bit
+        for i in (0..100).step_by(3) {
+            bitmap.set_present(i, true);
+        }
+
+        let bytes = bitmap.to_bytes();
+        let restored = PresenceBitmap::from_bytes(&bytes, 100);
+
+        for i in 0..100 {
+            assert_eq!(bitmap.is_present(i), restored.is_present(i));
+        }
+    }
+
+    #[test]
+    fn test_presence_bitmap_edge_cases() {
+        // Test with 1 record
+        let mut bitmap = PresenceBitmap::new(1);
+        bitmap.set_present(0, true);
+        let bytes = bitmap.to_bytes();
+        assert_eq!(bytes.len(), 1);
+
+        // Test with 7 records (fits in 1 byte)
+        let mut bitmap = PresenceBitmap::new(7);
+        for i in 0..7 {
+            bitmap.set_present(i, true);
+        }
+        let bytes = bitmap.to_bytes();
+        assert_eq!(bytes.len(), 1);
+
+        // Test with 8 records (needs 1 byte)
+        let mut bitmap = PresenceBitmap::new(8);
+        for i in 0..8 {
+            bitmap.set_present(i, true);
+        }
+        let bytes = bitmap.to_bytes();
+        assert_eq!(bytes.len(), 1);
+
+        // Test with 9 records (needs 2 bytes)
+        let mut bitmap = PresenceBitmap::new(9);
+        for i in 0..9 {
+            bitmap.set_present(i, true);
+        }
+        let bytes = bitmap.to_bytes();
+        assert_eq!(bytes.len(), 2);
+    }
+
+    #[test]
+    fn test_tag_packer_basic() {
+        let mut packer = TagPacker::new();
+        packer.push(0); // null
+        packer.push(1); // bool
+        packer.push(2); // int
+        packer.push(3); // decimal
+        packer.push(4); // string
+        packer.push(5); // object
+        packer.push(6); // array
+
+        let bytes = packer.finish();
+        assert_eq!(bytes.len(), 3); // 7 * 3 = 21 bits = 3 bytes
+
+        // The bit pattern should be: 000 001 010 011 100 101 110
+        // In LSB-first order, this becomes: 110 101 100 011 010 001 000
+        // Packed into bytes: 10001000 11000110 00011010
+        assert_eq!(bytes[0], 0b10001000);
+        assert_eq!(bytes[1], 0b11000110);
+        assert_eq!(bytes[2], 0b00011010);
+    }
+
+    #[test]
+    fn test_tag_packer_unpacker_roundtrip() {
+        let tags = vec![0, 1, 2, 3, 4, 5, 6, 7];
+
+        let mut packer = TagPacker::new();
+        for &tag in &tags {
+            packer.push(tag);
+        }
+        let bytes = packer.finish();
+
+        let unpacker = TagUnpacker::new(&bytes, tags.len());
+        let unpacked: Vec<u8> = unpacker.collect();
+
+        assert_eq!(tags, unpacked);
+    }
+
+    #[test]
+    fn test_tag_packer_padding() {
+        // Test with 3 tags (9 bits, needs 2 bytes with padding)
+        let mut packer = TagPacker::new();
+        packer.push(4);
+        packer.push(5);
+        packer.push(6);
+
+        let bytes = packer.finish();
+        assert_eq!(bytes.len(), 2);
+
+        // Last 5 bits should be zero (padding)
+        assert_eq!(bytes[1] & 0b11111000, 0); // Check padding bits are zero
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_tag_packer_invalid_tag() {
+        let mut packer = TagPacker::new();
+        packer.push(8); // Should panic
+    }
+}
+
