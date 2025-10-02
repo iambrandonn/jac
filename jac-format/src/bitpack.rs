@@ -39,6 +39,20 @@ impl PresenceBitmap {
         bits.truncate(count);
         Self { bits }
     }
+
+    /// Count the number of present (true) bits
+    pub fn count_present(&self) -> usize {
+        self.bits.count_ones()
+    }
+
+    /// Create from boolean values
+    pub fn from_bools(bools: &[bool]) -> Self {
+        let mut bits = BitVec::<u8, Lsb0>::new();
+        for &b in bools {
+            bits.push(b);
+        }
+        Self { bits }
+    }
 }
 
 /// 3-bit type tag packer

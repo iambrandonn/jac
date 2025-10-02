@@ -83,7 +83,18 @@ Each crate only depends on layers below it. `jac-format` has zero I/O dependenci
 - Wire format: ASCII digits ('0'..'9'), not binary
 - Ensures semantic equality on round-trip (not byte-identical formatting)
 
-### 5. **Block-Based Structure**
+### 5. **Dictionary Encoding Heuristics**
+- Dictionary encoding is used when: `distinct_count <= min(max_dict_entries, max(2, total_strings / 4))`
+- This balances compression ratio with memory usage
+- Dictionary entries are stored in first-occurrence order for better locality
+
+### 6. **Delta Encoding for Integers**
+- Delta encoding is used for monotonic integer sequences (timestamps, IDs)
+- Applied when: sequence is strictly increasing and `delta_ratio < 0.5`
+- Delta ratio = `(max_delta - min_delta) / (max_value - min_value)`
+- Stores first value as-is, then deltas (varint-encoded)
+
+### 7. **Block-Based Structure**
 - Files divided into blocks (default: 100k records per block)
 - Enables parallelism, seekability, and damage isolation
 - Each block has its own header, directory, and CRC32C
@@ -226,6 +237,28 @@ tag_bytes = ((3 * present_count) + 7) >> 3
 
 ---
 
+## Development Environment
+
+### Rust Toolchain Setup
+- **Project uses Rust 1.80.0** (specified in `rust-toolchain.toml`)
+- If `cargo` or `rustc` commands fail with "command not found":
+  1. Check if Rust is installed: `which rustc` or `which cargo`
+  2. If not installed, install via rustup: `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
+  3. Source the environment: `source ~/.cargo/env` or restart terminal
+  4. Verify installation: `cargo --version` and `rustc --version`
+- The project will automatically use the correct Rust version via `rust-toolchain.toml`
+- If you see "rustc not found" errors, the Rust toolchain needs to be installed or sourced
+
+### Common Commands
+- `cargo test` - Run all tests
+- `cargo test -p jac-format` - Run tests for specific crate
+- `cargo build` - Build all crates
+- `cargo check` - Check compilation without building
+- `cargo fmt` - Format code
+- `cargo clippy` - Run linter
+
+---
+
 ## Performance Considerations
 
 ### Hot Paths (profile before optimizing)
@@ -330,7 +363,7 @@ jac unpack file.jac -o debug.ndjson --ndjson
 
 ## Current Status
 
-**Implementation Phase:** Phase 2 (File & Block Structures) - ✅ Complete
+**Implementation Phase:** Phase 4 (Column Builder & Encoder) - ✅ Complete
 
 **Completed in Phase 0:**
 - ✅ Rust workspace initialized with proper crate topology
@@ -360,10 +393,31 @@ jac unpack file.jac -o debug.ndjson --ndjson
 - ✅ Limit enforcement working correctly
 - ✅ Error handling implemented and tested
 
+**Completed in Phase 3:**
+- ✅ Decimal type with exact representation (`decimal.rs`)
+- ✅ Type tag enum with validation (`types.rs`)
+- ✅ All decimal encoding/decoding functionality
+- ✅ Type tag conversion and validation
+- ✅ Comprehensive test coverage for decimal operations
+
+**Completed in Phase 4:**
+- ✅ ColumnBuilder for converting records to columnar format (`column.rs`)
+- ✅ FieldSegment encoding with compression support (`segment.rs`)
+- ✅ BlockBuilder for aggregating columns into blocks (`block_builder.rs`)
+- ✅ Integer detection logic (i64 vs decimal per spec)
+- ✅ Dictionary vs raw string heuristics
+- ✅ Delta encoding for monotonic integers
+- ✅ Segment payload follows spec order (§4.7)
+- ✅ Zstandard compression support
+- ✅ Comprehensive test coverage (77 total tests passing)
+- ✅ Schema drift support (fields can change type across records)
+- ✅ Memory budgeting and limit enforcement
+- ✅ Canonical key ordering support
+
 **Next Steps:**
-1. Begin Phase 3: Decimal & Type-Tag Support (already partially complete)
-2. Begin Phase 4: Column Builder & Encoder (`jac-codec`)
-3. Implement field segment encoding and block building
+1. Begin Phase 5: Segment Decoder (`jac-codec`)
+2. Implement field segment decoding and projection
+3. Implement block decoder for full record reconstruction
 
 **Last Updated:** 2025-01-27
 
