@@ -458,9 +458,9 @@ jac unpack file.jac -o debug.ndjson --ndjson
 - ✅ Progress spinners for pack/unpack/cat/ls plus verbose stderr summaries
 - ✅ `--stats` flag delivering per-field null/absent/type breakdowns (`jac-cli/src/main.rs`, `jac-cli/tests/cli.rs`)
 
-**Upcoming Focus (Phase 8 Week 2+):**
-1. Investigate configurable sampling strategies for extreme `--stats` workloads (reuse cached projections, expose limit flag)
-2. Polish CLI docs/help text (README/manpages) and align SPEC references (CLI usage, --progress examples)
-3. Prep for Phase 9 benchmarking and broader conformance/fuzz testing once remaining docs/polish land
+**Upcoming Focus (Phase 8 Week 3):**
+1. Evaluate further reuse opportunities for block decoding in `--stats` (avoid repeated decompression when fields share blocks)
+2. Polish CLI docs/help text (README/manpages) and align SPEC references (CLI usage, --progress/`--stats-sample` examples)
+3. Prep for Phase 9 benchmarking and broader conformance/fuzz testing once documentation polish lands
 
 **Last Updated:** 2025-02-18 (Phase 8 – Week 2 progress: throughput metrics & stats sampling)

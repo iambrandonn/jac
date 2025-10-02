@@ -45,6 +45,7 @@ jac cat output.jac --field userId --format csv --blocks 2-5
 
 # Compute detailed statistics
 jac ls output.jac --format json --stats
+jac ls output.jac --format json --stats --stats-sample 10000
 ```
 
 ### Library Usage
@@ -75,12 +76,12 @@ project(input, output, &["userId", "timestamp"], true)?;
 | `jac pack` | Compress NDJSON/JSON into `.jac` | `--block-records`, `--zstd-level`, `--ndjson`, `--json-array`, `--progress` |
 | `jac unpack` | Decompress `.jac` back to JSON | `--ndjson`, `--json-array`, `--progress` |
 | `jac ls` | Inspect blocks and field statistics | `--format {table,json}`, `--verbose`, `--fields-only`, `--blocks-only` |
-| `jac ls --stats` | Opt-in deep field analysis (samples ≤50k values/field) | `--stats`, `--verbose` |
+| `jac ls --stats` | Opt-in deep field analysis (samples ≤50k values/field) | `--stats`, `--verbose`, `--stats-sample <N>` |
 | `jac cat` | Stream values for a field | `--field <name>`, `--format {ndjson,json-array,csv}`, `--blocks <range>`, `--progress` |
 
 `jac ls` surfaces per-block summaries including field presence counts and compression ratios, while `jac cat` streams projected values without loading entire blocks, optionally showing progress for long-running reads.
 
-> **Sampling note:** `jac ls --stats` inspects up to 50k values per field when computing type distribution metrics to avoid re-reading massive segments; verbose output and JSON/table stats will indicate when sampling occurred.
+> **Sampling note:** `jac ls --stats` inspects up to 50k values per field by default (tunable via `--stats-sample <N>`) to avoid re-reading massive segments; verbose output and JSON/table stats indicate when sampling occurs.
 
 ## Architecture
 

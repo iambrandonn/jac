@@ -14,7 +14,7 @@ use jac_io::{
     DecompressSummary, InputSource, JacInput, JacReader, Limits, OutputSink,
 };
 use serde_json::Value;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::error::Error;
 use std::fs::File;
 use std::io::{BufWriter, Read, Seek, Write};
@@ -108,6 +108,9 @@ enum Commands {
         /// Compute and display detailed field statistics
         #[arg(long)]
         stats: bool,
+        /// Maximum values to sample per field when `--stats` is enabled (default: 50000)
+        #[arg(long, requires = "stats", value_name = "N")]
+        stats_sample: Option<usize>,
     },
     /// Stream values for a specific field
     ///
@@ -194,8 +197,17 @@ fn main() -> Result<(), Box<dyn Error>> {
             fields_only,
             blocks_only,
             stats,
+            stats_sample,
         } => {
-            handle_ls(input, format, verbose, fields_only, blocks_only, stats)?;
+            handle_ls(
+                input,
+                format,
+                verbose,
+                fields_only,
+                blocks_only,
+                stats,
+                stats_sample,
+            )?;
         }
         Commands::Cat {
             input,
@@ -418,7 +430,6 @@ struct DetailedFieldStats {
     sampled: bool,
 }
 
-#[derive(Default)]
 struct FieldStatsAccumulator {
     total_records: usize,
     present_values: usize,
@@ -427,6 +438,7 @@ struct FieldStatsAccumulator {
     type_distribution: BTreeMap<String, usize>,
     sample_values: usize,
     sampled: bool,
+    sample_limit: usize,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -437,8 +449,21 @@ struct ReaderMetrics {
 }
 
 impl FieldStatsAccumulator {
+    fn new(sample_limit: usize) -> Self {
+        Self {
+            total_records: 0,
+            present_values: 0,
+            absent_values: 0,
+            null_count: 0,
+            type_distribution: BTreeMap::new(),
+            sample_values: 0,
+            sampled: false,
+            sample_limit,
+        }
+    }
+
     fn record_value(&mut self, value: &Value) {
-        if self.sample_values >= STATS_SAMPLE_LIMIT_PER_FIELD {
+        if self.sample_values >= self.sample_limit {
             self.sampled = true;
             return;
         }
@@ -564,8 +589,13 @@ fn handle_ls(
     fields_only: bool,
     blocks_only: bool,
     stats: bool,
+    stats_sample: Option<usize>,
 ) -> Result<(), Box<dyn Error>> {
     let start = Instant::now();
+    let sample_limit = stats_sample.unwrap_or(STATS_SAMPLE_LIMIT_PER_FIELD);
+    if sample_limit == 0 {
+        return Err("--stats-sample must be greater than 0".into());
+    }
     let file = File::open(&input)?;
     let options = DecompressOptions::default();
     let codec_opts = DecompressOpts {
@@ -634,12 +664,14 @@ fn handle_ls(
 
     let mut stats_bar = stats.then(|| create_spinner("Computing field statistics"));
     let detailed_stats = if stats {
+        reader.rewind()?;
         let stats_vec = compute_detailed_stats(
             &mut reader,
             &block_handles,
             &summaries,
             &sorted_fields,
             stats_bar.as_ref(),
+            sample_limit,
         )?;
         if let Some(pb) = stats_bar.take() {
             pb.finish_with_message(format!("Computed stats for {} fields", sorted_fields.len()));
@@ -691,6 +723,7 @@ fn handle_ls(
                 fields_only,
                 blocks_only,
                 detailed_stats.as_deref(),
+                sample_limit,
             )?;
         }
         LsFormat::Json => {
@@ -703,6 +736,7 @@ fn handle_ls(
                 fields_only,
                 blocks_only,
                 detailed_stats.as_deref(),
+                sample_limit,
             )?;
         }
     }
@@ -718,6 +752,7 @@ fn print_ls_table(
     fields_only: bool,
     blocks_only: bool,
     stats: Option<&[DetailedFieldStats]>,
+    sample_limit: usize,
 ) -> Result<(), Box<dyn Error>> {
     if fields_only {
         for field in all_fields {
@@ -725,7 +760,7 @@ fn print_ls_table(
         }
         if let Some(stats_entries) = stats {
             writeln!(writer)?;
-            print_table_stats(writer, stats_entries)?;
+            print_table_stats(writer, stats_entries, sample_limit)?;
         }
         return Ok(());
     }
@@ -744,7 +779,7 @@ fn print_ls_table(
         }
         if let Some(stats_entries) = stats {
             writeln!(writer)?;
-            print_table_stats(writer, stats_entries)?;
+            print_table_stats(writer, stats_entries, sample_limit)?;
         }
         return Ok(());
     }
@@ -788,7 +823,7 @@ fn print_ls_table(
 
     if let Some(stats_entries) = stats {
         writeln!(writer)?;
-        print_table_stats(writer, stats_entries)?;
+        print_table_stats(writer, stats_entries, sample_limit)?;
     }
 
     Ok(())
@@ -797,6 +832,7 @@ fn print_ls_table(
 fn print_table_stats(
     writer: &mut dyn Write,
     stats: &[DetailedFieldStats],
+    sample_limit: usize,
 ) -> Result<(), Box<dyn Error>> {
     writeln!(writer, "Field\tPresent\tNull\tAbsent\tTypes\tSampled")?;
     for entry in stats {
@@ -811,7 +847,7 @@ fn print_table_stats(
                 .join(", ")
         };
         let sampled_note = if entry.sampled {
-            format!("yes ({} values)", entry.sample_size)
+            format!("yes ({} values, limit {})", entry.sample_size, sample_limit)
         } else {
             "no".to_string()
         };
@@ -837,6 +873,7 @@ fn print_ls_json(
     fields_only: bool,
     blocks_only: bool,
     stats: Option<&[DetailedFieldStats]>,
+    sample_limit: usize,
 ) -> Result<(), Box<dyn Error>> {
     let mut root = serde_json::Map::new();
 
@@ -852,6 +889,10 @@ fn print_ls_json(
 
     if let Some(stats_entries) = stats {
         root.insert("stats".to_string(), serde_json::to_value(stats_entries)?);
+        root.insert(
+            "stats_sample_limit".to_string(),
+            serde_json::Value::from(sample_limit),
+        );
     }
 
     serde_json::to_writer_pretty(&mut *writer, &serde_json::Value::Object(root))?;
@@ -865,14 +906,24 @@ fn compute_detailed_stats(
     summaries: &[BlockSummary],
     all_fields: &[String],
     progress: Option<&ProgressBar>,
+    sample_limit: usize,
 ) -> Result<Vec<DetailedFieldStats>, Box<dyn Error>> {
+    #[derive(Default)]
+    struct CachedBlock {
+        values: HashMap<String, Vec<Option<Value>>>,
+    }
+
     let mut stats_map: BTreeMap<String, FieldStatsAccumulator> = all_fields
         .iter()
         .cloned()
-        .map(|name| (name, FieldStatsAccumulator::default()))
+        .map(|name| (name, FieldStatsAccumulator::new(sample_limit)))
         .collect();
 
-    reader.rewind()?;
+    let mut cache: Vec<CachedBlock> = (0..blocks.len())
+        .map(|_| CachedBlock {
+            values: HashMap::new(),
+        })
+        .collect();
 
     for (idx, block) in blocks.iter().enumerate() {
         if let Some(pb) = progress {
@@ -880,7 +931,6 @@ fn compute_detailed_stats(
         }
 
         let summary = &summaries[idx];
-
         let mut present_fields: HashSet<&str> = HashSet::with_capacity(summary.fields.len());
 
         for field_summary in &summary.fields {
@@ -893,12 +943,16 @@ fn compute_detailed_stats(
             accumulator.present_values += field_summary.present_count;
             accumulator.absent_values += block.record_count - field_summary.present_count;
 
-            let iterator = reader.project_field(block, &field_summary.name)?;
-            for value_result in iterator {
-                let maybe_value = value_result?;
-                if let Some(value) = maybe_value {
-                    accumulator.record_value(&value);
-                }
+            let block_cache = &mut cache[idx];
+            let values = block_cache
+                .values
+                .entry(field_summary.name.clone())
+                .or_insert_with(|| {
+                    decode_field(reader, block, &field_summary.name).unwrap_or_default()
+                });
+
+            for value_opt in values.iter().flatten() {
+                accumulator.record_value(value_opt);
                 if accumulator.sampled {
                     break;
                 }
@@ -920,6 +974,15 @@ fn compute_detailed_stats(
         .into_iter()
         .map(|(name, accumulator)| accumulator.into_detailed(name))
         .collect())
+}
+
+fn decode_field(
+    reader: &mut JacReader<File>,
+    block: &BlockHandle,
+    field: &str,
+) -> Result<Vec<Option<Value>>, Box<dyn Error>> {
+    let field_iter = reader.project_field(block, field)?;
+    Ok(field_iter.collect::<Result<Vec<Option<Value>>, _>>()?)
 }
 
 fn handle_cat(
@@ -1003,6 +1066,10 @@ fn handle_cat(
             }
         }
         reader_metrics.records_observed = values_emitted;
+    }
+
+    if reader_metrics.blocks_read == 0 && reader_metrics.records_observed > 0 {
+        reader_metrics.blocks_read = 1;
     }
 
     let elapsed = start.elapsed();
@@ -1331,12 +1398,21 @@ mod tests {
     fn print_ls_table_fields_only_sorts() {
         let mut buf = Vec::new();
         let summaries = Vec::new();
-        let all_fields = vec![
-            "id".to_string(),
-            "timestamp".to_string(),
-            "user".to_string(),
-        ];
-        print_ls_table(&mut buf, &summaries, &all_fields, false, true, false, None).unwrap();
+        let all_fields = vec!["id", "timestamp", "user"]
+            .into_iter()
+            .map(String::from)
+            .collect::<Vec<_>>();
+        print_ls_table(
+            &mut buf,
+            &summaries,
+            &all_fields,
+            false,
+            true,
+            false,
+            None,
+            STATS_SAMPLE_LIMIT_PER_FIELD,
+        )
+        .unwrap();
         let output = String::from_utf8(buf).unwrap();
         let lines: Vec<_> = output.lines().collect();
         assert_eq!(lines, vec!["id", "timestamp", "user"]);
@@ -1371,8 +1447,18 @@ mod tests {
                 },
             ],
         }];
-        let all_fields = vec!["a".to_string(), "b".to_string()];
-        print_ls_json(&mut buf, &summaries, &all_fields, false, false, false, None).unwrap();
+        let all_fields = vec![String::from("a"), String::from("b")];
+        print_ls_json(
+            &mut buf,
+            &summaries,
+            &all_fields,
+            false,
+            false,
+            false,
+            None,
+            STATS_SAMPLE_LIMIT_PER_FIELD,
+        )
+        .unwrap();
         let value: Value = serde_json::from_slice(&buf).unwrap();
         assert_eq!(value["blocks"].as_array().unwrap().len(), 1);
         assert_eq!(value.get("fields"), Some(&serde_json::json!(["a", "b"])));

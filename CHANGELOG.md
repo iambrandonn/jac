@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Test data fixtures for conformance testing
 - CLI progress spinners and throughput summaries for `pack`, `unpack`, `ls`, and `cat`
 - `jac ls --stats` sampling-based field analysis with JSON/table outputs
+- Configurable `--stats-sample` limit for tuning per-field sampling in `jac ls --stats`
 - Integration tests covering CLI inspection and projection workflows
 
 ### Changed

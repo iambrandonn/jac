@@ -87,6 +87,7 @@ fn ls_stats_reports_field_details() -> Result<(), Box<dyn Error>> {
         .stdout
         .clone();
     let value: Value = serde_json::from_slice(&output)?;
+    assert_eq!(value["stats_sample_limit"], Value::from(50_000));
     let stats = value["stats"].as_array().expect("stats array");
     assert_eq!(stats.len(), 2);
     let user_entry = stats
@@ -100,6 +101,36 @@ fn ls_stats_reports_field_details() -> Result<(), Box<dyn Error>> {
     assert_eq!(types.get("string").cloned().unwrap(), Value::from(2));
     assert_eq!(user_entry["sampled"], Value::Bool(false));
     assert_eq!(user_entry["sample_size"], Value::from(2));
+    Ok(())
+}
+
+#[test]
+fn ls_stats_respects_sample_limit_flag() -> Result<(), Box<dyn Error>> {
+    let sample = build_sample_file()?;
+    let output = assert_cmd::Command::cargo_bin("jac")?
+        .args([
+            "ls",
+            sample.jac_path.to_str().unwrap(),
+            "--format",
+            "json",
+            "--stats",
+            "--stats-sample",
+            "1",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let value: Value = serde_json::from_slice(&output)?;
+    assert_eq!(value["stats_sample_limit"], Value::from(1));
+    let stats = value["stats"].as_array().unwrap();
+    let user_entry = stats
+        .iter()
+        .find(|entry| entry["field_name"] == "user")
+        .unwrap();
+    assert_eq!(user_entry["sampled"], Value::Bool(true));
+    assert_eq!(user_entry["sample_size"], Value::from(1));
     Ok(())
 }
 
