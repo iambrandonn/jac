@@ -10,7 +10,11 @@ pub struct JacWriter<W: std::io::Write> {
 
 impl<W: std::io::Write> JacWriter<W> {
     /// Create new writer
-    pub fn new(_writer: W, _header: jac_format::FileHeader, _opts: CompressOpts) -> Result<Self, jac_format::JacError> {
+    pub fn new(
+        _writer: W,
+        _header: jac_format::FileHeader,
+        _opts: CompressOpts,
+    ) -> Result<Self, jac_format::JacError> {
         // TODO: Implement writer creation
         Ok(Self {
             _phantom: PhantomData,
@@ -19,7 +23,10 @@ impl<W: std::io::Write> JacWriter<W> {
     }
 
     /// Write record
-    pub fn write_record(&mut self, _rec: &serde_json::Map<String, serde_json::Value>) -> Result<(), jac_format::JacError> {
+    pub fn write_record(
+        &mut self,
+        _rec: &serde_json::Map<String, serde_json::Value>,
+    ) -> Result<(), jac_format::JacError> {
         // TODO: Implement record writing
         Ok(())
     }

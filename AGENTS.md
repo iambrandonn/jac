@@ -363,7 +363,7 @@ jac unpack file.jac -o debug.ndjson --ndjson
 
 ## Current Status
 
-**Implementation Phase:** Phase 4 (Column Builder & Encoder) - ✅ Complete
+**Implementation Phase:** Phase 5 (Segment Decoder) - ✅ Complete
 
 **Completed in Phase 0:**
 - ✅ Rust workspace initialized with proper crate topology
@@ -414,10 +414,26 @@ jac unpack file.jac -o debug.ndjson --ndjson
 - ✅ Memory budgeting and limit enforcement
 - ✅ Canonical key ordering support
 
-**Next Steps:**
-1. Begin Phase 5: Segment Decoder (`jac-codec`)
-2. Implement field segment decoding and projection
-3. Implement block decoder for full record reconstruction
+**Completed in Phase 5:**
+- ✅ FieldSegmentDecoder for decoding individual field segments (`segment_decode.rs`)
+- ✅ BlockDecoder for full record reconstruction and field projection (`block_decode.rs`)
+- ✅ Pre-decompression security limit enforcement
+- ✅ Zstandard decompression with proper error handling
+- ✅ Dictionary decoding with bounds checking
+- ✅ Delta encoding decoder for monotonic integer sequences
+- ✅ Presence bitmap and type tag parsing
+- ✅ All data type support (null, bool, int, decimal, string, object, array)
+- ✅ Comprehensive error handling and validation
+- ✅ Spec §12.1 conformance test implementation and passing
+- ✅ Full round-trip testing (JSON → encode → decode → JSON)
+- ✅ Field projection testing
+- ✅ Security limit enforcement (decompression bomb prevention)
+- ✅ Test coverage: 24 tests in jac-codec, 66 tests in jac-format (90 total)
 
-**Last Updated:** 2025-01-27
+**Next Steps:**
+1. Begin Phase 6: File I/O Layer (`jac-io`)
+2. Implement JacWriter for streaming compression
+3. Implement JacReader for streaming decompression and projection
+
+**Last Updated:** 2025-01-27 (Phase 5 Complete)
 

@@ -16,26 +16,26 @@
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
 
-pub mod constants;
-pub mod varint;
 pub mod bitpack;
-pub mod checksum;
-pub mod error;
-pub mod limits;
-pub mod header;
 pub mod block;
-pub mod footer;
+pub mod checksum;
+pub mod constants;
 pub mod decimal;
+pub mod error;
+pub mod footer;
+pub mod header;
+pub mod limits;
 pub mod types;
+pub mod varint;
 
 // Re-export commonly used types
+pub use block::{BlockHeader, FieldDirectoryEntry};
+pub use decimal::Decimal;
 pub use error::{JacError, Result};
+pub use footer::{BlockIndexEntry, IndexFooter};
+pub use header::FileHeader;
 pub use limits::Limits;
 pub use types::TypeTag;
-pub use header::FileHeader;
-pub use block::{BlockHeader, FieldDirectoryEntry};
-pub use footer::{IndexFooter, BlockIndexEntry};
-pub use decimal::Decimal;
 
 /// Compression codec options
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -85,8 +85,14 @@ mod tests {
     fn test_codec_compressor_id() {
         assert_eq!(Codec::None.compressor_id(), constants::COMPRESSOR_NONE);
         assert_eq!(Codec::Zstd(15).compressor_id(), constants::COMPRESSOR_ZSTD);
-        assert_eq!(Codec::Brotli(11).compressor_id(), constants::COMPRESSOR_BROTLI);
-        assert_eq!(Codec::Deflate(6).compressor_id(), constants::COMPRESSOR_DEFLATE);
+        assert_eq!(
+            Codec::Brotli(11).compressor_id(),
+            constants::COMPRESSOR_BROTLI
+        );
+        assert_eq!(
+            Codec::Deflate(6).compressor_id(),
+            constants::COMPRESSOR_DEFLATE
+        );
     }
 
     #[test]

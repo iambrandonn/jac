@@ -16,7 +16,7 @@ zstd.workspace = true
 ahash.workspace = true
 smallvec.workspace = true
 thiserror.workspace = true
+bitvec.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
-

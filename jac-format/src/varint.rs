@@ -23,7 +23,9 @@ pub fn decode_uleb128(bytes: &[u8]) -> Result<(u64, usize), crate::error::JacErr
 
     for (i, &byte) in bytes.iter().enumerate() {
         if i >= 10 {
-            return Err(crate::error::JacError::LimitExceeded("ULEB128 too long".to_string()));
+            return Err(crate::error::JacError::LimitExceeded(
+                "ULEB128 too long".to_string(),
+            ));
         }
 
         result |= ((byte & 0x7F) as u64) << shift;
@@ -54,15 +56,7 @@ mod tests {
 
     #[test]
     fn test_uleb128_roundtrip() {
-        let test_cases = vec![
-            0u64,
-            1,
-            127,
-            128,
-            16383,
-            16384,
-            u64::MAX,
-        ];
+        let test_cases = vec![0u64, 1, 127, 128, 16383, 16384, u64::MAX];
 
         for val in test_cases {
             let encoded = encode_uleb128(val);
@@ -88,17 +82,7 @@ mod tests {
 
     #[test]
     fn test_zigzag_roundtrip() {
-        let test_cases = vec![
-            0i64,
-            1,
-            -1,
-            127,
-            -127,
-            128,
-            -128,
-            i64::MAX,
-            i64::MIN,
-        ];
+        let test_cases = vec![0i64, 1, -1, 127, -127, 128, -128, i64::MAX, i64::MIN];
 
         for val in test_cases {
             let encoded = zigzag_encode(val);
@@ -116,4 +100,3 @@ mod tests {
         assert_eq!(zigzag_encode(2), 4);
     }
 }
-

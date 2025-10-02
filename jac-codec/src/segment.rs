@@ -1,6 +1,6 @@
 //! Field segment encoding
 
-use jac_format::{Result, JacError};
+use jac_format::{JacError, Result};
 
 /// Field segment containing encoded data
 #[derive(Debug, Clone)]
@@ -25,8 +25,9 @@ impl FieldSegment {
             }
             1 => {
                 // Zstandard compression
-                zstd::encode_all(self.uncompressed_payload.as_slice(), level as i32)
-                    .map_err(|e| JacError::DecompressError(format!("Zstd compression failed: {}", e)))
+                zstd::encode_all(self.uncompressed_payload.as_slice(), level as i32).map_err(|e| {
+                    JacError::DecompressError(format!("Zstd compression failed: {}", e))
+                })
             }
             2 => {
                 // Brotli (not implemented in v0.1.0)

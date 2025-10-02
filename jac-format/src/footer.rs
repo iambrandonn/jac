@@ -1,8 +1,8 @@
 //! Index footer structures
 
-use crate::constants::INDEX_MAGIC;
-use crate::varint::{encode_uleb128, decode_uleb128};
 use crate::checksum::{compute_crc32c, verify_crc32c};
+use crate::constants::INDEX_MAGIC;
+use crate::varint::{decode_uleb128, encode_uleb128};
 
 /// Index footer
 #[derive(Debug, Clone)]
@@ -54,7 +54,8 @@ impl IndexFooter {
         let index_len_bytes = encode_uleb128(index_len as u64);
 
         // Replace the placeholder with actual index_len
-        result[index_len_pos..index_len_pos + index_len_bytes.len()].copy_from_slice(&index_len_bytes);
+        result[index_len_pos..index_len_pos + index_len_bytes.len()]
+            .copy_from_slice(&index_len_bytes);
 
         // Remove any excess bytes if index_len_bytes is shorter than 8
         if index_len_bytes.len() < 8 {
@@ -81,7 +82,8 @@ impl IndexFooter {
         }
 
         // Index magic (little-endian u32)
-        let magic = u32::from_le_bytes([bytes[pos], bytes[pos + 1], bytes[pos + 2], bytes[pos + 3]]);
+        let magic =
+            u32::from_le_bytes([bytes[pos], bytes[pos + 1], bytes[pos + 2], bytes[pos + 3]]);
         if magic != INDEX_MAGIC {
             return Err(crate::error::JacError::CorruptBlock);
         }
@@ -122,9 +124,8 @@ impl IndexFooter {
             return Err(crate::error::JacError::UnexpectedEof);
         }
 
-        let expected_crc = u32::from_le_bytes([
-            bytes[pos], bytes[pos + 1], bytes[pos + 2], bytes[pos + 3]
-        ]);
+        let expected_crc =
+            u32::from_le_bytes([bytes[pos], bytes[pos + 1], bytes[pos + 2], bytes[pos + 3]]);
         let footer_without_crc = &bytes[0..pos];
         verify_crc32c(footer_without_crc, expected_crc)?;
 
@@ -154,9 +155,15 @@ mod tests {
         let decoded = IndexFooter::decode(&encoded).unwrap();
 
         assert_eq!(footer.blocks.len(), decoded.blocks.len());
-        assert_eq!(footer.blocks[0].block_offset, decoded.blocks[0].block_offset);
+        assert_eq!(
+            footer.blocks[0].block_offset,
+            decoded.blocks[0].block_offset
+        );
         assert_eq!(footer.blocks[0].block_size, decoded.blocks[0].block_size);
-        assert_eq!(footer.blocks[0].record_count, decoded.blocks[0].record_count);
+        assert_eq!(
+            footer.blocks[0].record_count,
+            decoded.blocks[0].record_count
+        );
     }
 
     #[test]
@@ -194,9 +201,7 @@ mod tests {
 
     #[test]
     fn test_index_footer_empty_blocks() {
-        let footer = IndexFooter {
-            blocks: vec![],
-        };
+        let footer = IndexFooter { blocks: vec![] };
 
         let encoded = footer.encode().unwrap();
         let decoded = IndexFooter::decode(&encoded).unwrap();
@@ -297,12 +302,24 @@ mod tests {
         let decoded = IndexFooter::decode(&encoded).unwrap();
 
         assert_eq!(footer.blocks.len(), decoded.blocks.len());
-        assert_eq!(footer.blocks[0].block_offset, decoded.blocks[0].block_offset);
+        assert_eq!(
+            footer.blocks[0].block_offset,
+            decoded.blocks[0].block_offset
+        );
         assert_eq!(footer.blocks[0].block_size, decoded.blocks[0].block_size);
-        assert_eq!(footer.blocks[0].record_count, decoded.blocks[0].record_count);
-        assert_eq!(footer.blocks[1].block_offset, decoded.blocks[1].block_offset);
+        assert_eq!(
+            footer.blocks[0].record_count,
+            decoded.blocks[0].record_count
+        );
+        assert_eq!(
+            footer.blocks[1].block_offset,
+            decoded.blocks[1].block_offset
+        );
         assert_eq!(footer.blocks[1].block_size, decoded.blocks[1].block_size);
-        assert_eq!(footer.blocks[1].record_count, decoded.blocks[1].record_count);
+        assert_eq!(
+            footer.blocks[1].record_count,
+            decoded.blocks[1].record_count
+        );
     }
 
     #[test]

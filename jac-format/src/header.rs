@@ -1,7 +1,7 @@
 //! File header structures
 
 use crate::constants::FILE_MAGIC;
-use crate::varint::{encode_uleb128, decode_uleb128};
+use crate::varint::{decode_uleb128, encode_uleb128};
 
 /// File header
 #[derive(Debug, Clone)]
@@ -68,9 +68,8 @@ impl FileHeader {
         }
 
         // Flags (little-endian u32)
-        let flags = u32::from_le_bytes([
-            bytes[pos], bytes[pos + 1], bytes[pos + 2], bytes[pos + 3]
-        ]);
+        let flags =
+            u32::from_le_bytes([bytes[pos], bytes[pos + 1], bytes[pos + 2], bytes[pos + 3]]);
         pos += 4;
 
         // Default compressor
@@ -98,13 +97,16 @@ impl FileHeader {
         let user_metadata = bytes[pos..pos + metadata_len as usize].to_vec();
         pos += metadata_len as usize;
 
-        Ok((Self {
-            flags,
-            default_compressor,
-            default_compression_level,
-            block_size_hint_records: block_size_hint_records as usize,
-            user_metadata,
-        }, pos))
+        Ok((
+            Self {
+                flags,
+                default_compressor,
+                default_compression_level,
+                block_size_hint_records: block_size_hint_records as usize,
+                user_metadata,
+            },
+            pos,
+        ))
     }
 
     /// Check if canonicalize keys flag is set
@@ -143,8 +145,14 @@ mod tests {
 
         assert_eq!(header.flags, decoded.flags);
         assert_eq!(header.default_compressor, decoded.default_compressor);
-        assert_eq!(header.default_compression_level, decoded.default_compression_level);
-        assert_eq!(header.block_size_hint_records, decoded.block_size_hint_records);
+        assert_eq!(
+            header.default_compression_level,
+            decoded.default_compression_level
+        );
+        assert_eq!(
+            header.block_size_hint_records,
+            decoded.block_size_hint_records
+        );
         assert_eq!(header.user_metadata, decoded.user_metadata);
         assert_eq!(bytes_consumed, encoded.len());
     }
@@ -164,8 +172,14 @@ mod tests {
 
         assert_eq!(header.flags, decoded.flags);
         assert_eq!(header.default_compressor, decoded.default_compressor);
-        assert_eq!(header.default_compression_level, decoded.default_compression_level);
-        assert_eq!(header.block_size_hint_records, decoded.block_size_hint_records);
+        assert_eq!(
+            header.default_compression_level,
+            decoded.default_compression_level
+        );
+        assert_eq!(
+            header.block_size_hint_records,
+            decoded.block_size_hint_records
+        );
         assert_eq!(header.user_metadata, decoded.user_metadata);
         assert_eq!(bytes_consumed, encoded.len());
     }

@@ -2,9 +2,9 @@
 
 use crate::CompressOpts;
 use jac_format::{
-    TypeTag, Decimal, Result, JacError,
-    varint::{encode_uleb128, zigzag_encode},
     bitpack::{PresenceBitmap, TagPacker},
+    varint::{encode_uleb128, zigzag_encode},
+    Decimal, JacError, Result, TypeTag,
 };
 use serde_json;
 use std::collections::HashMap;
@@ -30,8 +30,6 @@ pub struct ColumnBuilder {
     objects: Vec<Vec<u8>>,
     /// Array values (minified JSON)
     arrays: Vec<Vec<u8>>,
-    /// String dictionary (if using dictionary encoding)
-    string_dict: Option<HashMap<String, usize>>,
     /// Current position in present values
     present_idx: usize,
 }
@@ -49,7 +47,6 @@ impl ColumnBuilder {
             strings: Vec::new(),
             objects: Vec::new(),
             arrays: Vec::new(),
-            string_dict: None,
             present_idx: 0,
         }
     }
@@ -127,22 +124,35 @@ impl ColumnBuilder {
     }
 
     /// Finalize column and create field segment
-    pub fn finalize(self, opts: &CompressOpts) -> Result<FieldSegment> {
-        let present_count = self.presence.count_present();
+    pub fn finalize(self, opts: &CompressOpts, record_count: usize) -> Result<FieldSegment> {
+        let mut trimmed_presence = PresenceBitmap::new(record_count);
+        for idx in 0..record_count {
+            if self.presence.is_present(idx) {
+                trimmed_presence.set_present(idx, true);
+            }
+        }
+
+        let present_count = trimmed_presence.count_present();
 
         // Validate limits
         if present_count > opts.limits.max_records_per_block {
-            return Err(JacError::LimitExceeded("Too many present values".to_string()));
+            return Err(JacError::LimitExceeded(
+                "Too many present values".to_string(),
+            ));
         }
 
         // Build string dictionary if beneficial
-        let (string_dict, use_dict) = self.build_string_dictionary(opts)?;
+        let (dictionary_info, use_dict) = self.build_string_dictionary(opts)?;
+        let dict_entry_count = dictionary_info
+            .as_ref()
+            .map(|(entries, _)| entries.len())
+            .unwrap_or(0);
 
         // Build uncompressed payload in spec order (§4.7)
         let mut payload = Vec::new();
 
         // 1. Presence bitmap
-        payload.extend_from_slice(&self.presence.to_bytes());
+        payload.extend_from_slice(&trimmed_presence.to_bytes());
 
         // 2. Type tag stream (3-bit packed)
         let mut tag_packer = TagPacker::new();
@@ -153,9 +163,8 @@ impl ColumnBuilder {
 
         // 3. String dictionary (if using dictionary encoding)
         if use_dict {
-            if let Some(dict) = &string_dict {
-                // Write dictionary entries
-                for (_, string) in dict.iter().map(|(k, v)| (v, k)).collect::<Vec<_>>() {
+            if let Some((entries, _)) = &dictionary_info {
+                for string in entries {
                     let string_bytes = string.as_bytes();
                     payload.extend_from_slice(&encode_uleb128(string_bytes.len() as u64));
                     payload.extend_from_slice(string_bytes);
@@ -198,12 +207,15 @@ impl ColumnBuilder {
         // 7. String substream (dictionary indices or raw strings)
         if !self.strings.is_empty() {
             if use_dict {
-                // Write dictionary indices
-                for string in &self.strings {
-                    if let Some(&idx) = string_dict.as_ref().unwrap().get(string) {
-                        payload.extend_from_slice(&encode_uleb128(idx as u64));
-                    } else {
-                        return Err(JacError::Internal("String not found in dictionary".to_string()));
+                if let Some((_, dict_map)) = &dictionary_info {
+                    for string in &self.strings {
+                        if let Some(&idx) = dict_map.get(string) {
+                            payload.extend_from_slice(&encode_uleb128(idx as u64));
+                        } else {
+                            return Err(JacError::Internal(
+                                "String not found in dictionary".to_string(),
+                            ));
+                        }
                     }
                 }
             } else {
@@ -239,35 +251,40 @@ impl ColumnBuilder {
         Ok(FieldSegment {
             uncompressed_payload: payload,
             encoding_flags,
-            dict_entry_count: string_dict.as_ref().map(|d| d.len()).unwrap_or(0),
+            dict_entry_count,
             value_count_present: present_count,
         })
     }
 
     /// Build string dictionary if beneficial
-    fn build_string_dictionary(&self, opts: &CompressOpts) -> Result<(Option<HashMap<String, usize>>, bool)> {
+    fn build_string_dictionary(
+        &self,
+        opts: &CompressOpts,
+    ) -> Result<(Option<(Vec<String>, HashMap<String, usize>)>, bool)> {
         if self.strings.is_empty() {
             return Ok((None, false));
         }
 
-        // Count distinct strings
-        let mut string_counts = HashMap::new();
+        // Determine distinct strings in first-occurrence order
+        let mut dict_entries = Vec::new();
+        let mut dict_map = HashMap::new();
         for string in &self.strings {
-            *string_counts.entry(string.clone()).or_insert(0) += 1;
+            if dict_map.contains_key(string) {
+                continue;
+            }
+            let index = dict_entries.len();
+            dict_entries.push(string.clone());
+            dict_map.insert(string.clone(), index);
         }
 
-        let distinct_count = string_counts.len();
-        let threshold = std::cmp::min(opts.max_dict_entries, std::cmp::max(2, self.strings.len() / 4));
+        let distinct_count = dict_entries.len();
+        let threshold = std::cmp::min(
+            opts.max_dict_entries,
+            std::cmp::max(2, self.strings.len() / 4),
+        );
 
         if distinct_count <= threshold {
-            // Build dictionary
-            let mut dict = HashMap::new();
-            let mut idx = 0;
-            for (string, _) in string_counts {
-                dict.insert(string, idx);
-                idx += 1;
-            }
-            Ok((Some(dict), true))
+            Ok((Some((dict_entries, dict_map)), true))
         } else {
             Ok((None, false))
         }
@@ -315,8 +332,9 @@ impl FieldSegment {
             }
             1 => {
                 // Zstandard compression
-                zstd::encode_all(self.uncompressed_payload.as_slice(), level as i32)
-                    .map_err(|e| JacError::DecompressError(format!("Zstd compression failed: {}", e)))
+                zstd::encode_all(self.uncompressed_payload.as_slice(), level as i32).map_err(|e| {
+                    JacError::DecompressError(format!("Zstd compression failed: {}", e))
+                })
             }
             2 => {
                 // Brotli (not implemented in v0.1.0)
@@ -346,7 +364,7 @@ mod tests {
         builder.add_value(1, &json!("hello")).unwrap();
         builder.add_value(2, &json!(null)).unwrap();
 
-        let segment = builder.finalize(&opts).unwrap();
+        let segment = builder.finalize(&opts, 3).unwrap();
         assert_eq!(segment.value_count_present, 3);
         assert!(!segment.uncompressed_payload.is_empty());
     }
@@ -363,7 +381,7 @@ mod tests {
         builder.add_value(3, &json!("world")).unwrap();
         // Skip index 4 (absent)
 
-        let segment = builder.finalize(&opts).unwrap();
+        let segment = builder.finalize(&opts, 5).unwrap();
         assert_eq!(segment.value_count_present, 4);
         assert!(!segment.uncompressed_payload.is_empty());
     }
@@ -384,7 +402,7 @@ mod tests {
         builder.add_value(6, &json!("hello")).unwrap();
         builder.add_value(7, &json!("world")).unwrap();
 
-        let segment = builder.finalize(&opts).unwrap();
+        let segment = builder.finalize(&opts, 8).unwrap();
         assert_eq!(segment.value_count_present, 8);
         assert!(segment.encoding_flags & 1 != 0); // DICTIONARY flag should be set
         assert_eq!(segment.dict_entry_count, 2); // "hello" and "world"
@@ -402,7 +420,7 @@ mod tests {
         builder.add_value(3, &json!(1003)).unwrap();
         builder.add_value(4, &json!(1004)).unwrap();
 
-        let segment = builder.finalize(&opts).unwrap();
+        let segment = builder.finalize(&opts, 5).unwrap();
         assert_eq!(segment.value_count_present, 5);
         assert!(segment.encoding_flags & 2 != 0); // DELTA flag should be set
     }
@@ -416,7 +434,7 @@ mod tests {
         builder.add_value(0, &json!({"key": "value"})).unwrap();
         builder.add_value(1, &json!([1, 2, 3])).unwrap();
 
-        let segment = builder.finalize(&opts).unwrap();
+        let segment = builder.finalize(&opts, 2).unwrap();
         assert_eq!(segment.value_count_present, 2);
         assert!(!segment.uncompressed_payload.is_empty());
     }
@@ -430,7 +448,7 @@ mod tests {
         builder.add_value(0, &json!(i64::MAX)).unwrap();
         builder.add_value(1, &json!(i64::MAX as u64 + 1)).unwrap();
 
-        let segment = builder.finalize(&opts).unwrap();
+        let segment = builder.finalize(&opts, 2).unwrap();
         assert_eq!(segment.value_count_present, 2);
         assert!(!segment.uncompressed_payload.is_empty());
     }

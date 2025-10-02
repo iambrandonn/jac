@@ -2,7 +2,7 @@
 
 use crate::constants::BLOCK_MAGIC;
 use crate::limits::Limits;
-use crate::varint::{encode_uleb128, decode_uleb128};
+use crate::varint::{decode_uleb128, encode_uleb128};
 
 /// Block header
 #[derive(Debug, Clone)]
@@ -102,7 +102,8 @@ impl BlockHeader {
         let header_len_bytes = encode_uleb128(header_len as u64);
 
         // Replace the placeholder with actual header_len
-        result[header_len_pos..header_len_pos + header_len_bytes.len()].copy_from_slice(&header_len_bytes);
+        result[header_len_pos..header_len_pos + header_len_bytes.len()]
+            .copy_from_slice(&header_len_bytes);
 
         // Remove any excess bytes if header_len_bytes is shorter than 8
         if header_len_bytes.len() < 8 {
@@ -125,7 +126,8 @@ impl BlockHeader {
         }
 
         // Block magic (little-endian u32)
-        let magic = u32::from_le_bytes([bytes[pos], bytes[pos + 1], bytes[pos + 2], bytes[pos + 3]]);
+        let magic =
+            u32::from_le_bytes([bytes[pos], bytes[pos + 1], bytes[pos + 2], bytes[pos + 3]]);
         if magic != BLOCK_MAGIC {
             return Err(crate::error::JacError::CorruptBlock);
         }
@@ -141,9 +143,10 @@ impl BlockHeader {
 
         // Enforce record count limit
         if record_count as usize > limits.max_records_per_block {
-            return Err(crate::error::JacError::LimitExceeded(
-                format!("Record count {} exceeds limit {}", record_count, limits.max_records_per_block)
-            ));
+            return Err(crate::error::JacError::LimitExceeded(format!(
+                "Record count {} exceeds limit {}",
+                record_count, limits.max_records_per_block
+            )));
         }
 
         // Field count (ULEB128)
@@ -152,9 +155,10 @@ impl BlockHeader {
 
         // Enforce field count limit
         if field_count as usize > limits.max_fields_per_block {
-            return Err(crate::error::JacError::LimitExceeded(
-                format!("Field count {} exceeds limit {}", field_count, limits.max_fields_per_block)
-            ));
+            return Err(crate::error::JacError::LimitExceeded(format!(
+                "Field count {} exceeds limit {}",
+                field_count, limits.max_fields_per_block
+            )));
         }
 
         // Decode field directory entries
@@ -166,9 +170,10 @@ impl BlockHeader {
 
             // Check field name length limit
             if name_len as usize > limits.max_string_len_per_value {
-                return Err(crate::error::JacError::LimitExceeded(
-                    format!("Field name length {} exceeds limit {}", name_len, limits.max_string_len_per_value)
-                ));
+                return Err(crate::error::JacError::LimitExceeded(format!(
+                    "Field name length {} exceeds limit {}",
+                    name_len, limits.max_string_len_per_value
+                )));
             }
 
             // Check if we have enough bytes for the field name
@@ -182,7 +187,8 @@ impl BlockHeader {
             pos += name_len as usize;
 
             // Check remaining length for fixed fields
-            if pos + 1 + 1 > bytes.len() { // compressor + compression_level
+            if pos + 1 + 1 > bytes.len() {
+                // compressor + compression_level
                 return Err(crate::error::JacError::UnexpectedEof);
             }
 
@@ -216,24 +222,28 @@ impl BlockHeader {
 
             // Enforce dictionary entry count limit
             if dict_entry_count as usize > limits.max_dict_entries_per_field {
-                return Err(crate::error::JacError::LimitExceeded(
-                    format!("Dictionary entry count {} exceeds limit {}", dict_entry_count, limits.max_dict_entries_per_field)
-                ));
+                return Err(crate::error::JacError::LimitExceeded(format!(
+                    "Dictionary entry count {} exceeds limit {}",
+                    dict_entry_count, limits.max_dict_entries_per_field
+                )));
             }
 
             // Segment uncompressed length (ULEB128)
-            let (segment_uncompressed_len, segment_uncompressed_len_len) = decode_uleb128(&bytes[pos..])?;
+            let (segment_uncompressed_len, segment_uncompressed_len_len) =
+                decode_uleb128(&bytes[pos..])?;
             pos += segment_uncompressed_len_len;
 
             // Enforce segment uncompressed length limit
             if segment_uncompressed_len as usize > limits.max_segment_uncompressed_len {
-                return Err(crate::error::JacError::LimitExceeded(
-                    format!("Segment uncompressed length {} exceeds limit {}", segment_uncompressed_len, limits.max_segment_uncompressed_len)
-                ));
+                return Err(crate::error::JacError::LimitExceeded(format!(
+                    "Segment uncompressed length {} exceeds limit {}",
+                    segment_uncompressed_len, limits.max_segment_uncompressed_len
+                )));
             }
 
             // Segment compressed length (ULEB128)
-            let (segment_compressed_len, segment_compressed_len_len) = decode_uleb128(&bytes[pos..])?;
+            let (segment_compressed_len, segment_compressed_len_len) =
+                decode_uleb128(&bytes[pos..])?;
             pos += segment_compressed_len_len;
 
             // Segment offset (ULEB128)
@@ -255,10 +265,13 @@ impl BlockHeader {
             });
         }
 
-        Ok((Self {
-            record_count: record_count as usize,
-            fields,
-        }, pos))
+        Ok((
+            Self {
+                record_count: record_count as usize,
+                fields,
+            },
+            pos,
+        ))
     }
 }
 
@@ -305,7 +318,8 @@ mod tests {
         };
 
         let encoded = header.encode().unwrap();
-        let (decoded, bytes_consumed) = BlockHeader::decode(&encoded, &create_test_limits()).unwrap();
+        let (decoded, bytes_consumed) =
+            BlockHeader::decode(&encoded, &create_test_limits()).unwrap();
 
         assert_eq!(header.record_count, decoded.record_count);
         assert_eq!(header.fields.len(), decoded.fields.len());
@@ -349,7 +363,8 @@ mod tests {
         };
 
         let encoded = header.encode().unwrap();
-        let (decoded, bytes_consumed) = BlockHeader::decode(&encoded, &create_test_limits()).unwrap();
+        let (decoded, bytes_consumed) =
+            BlockHeader::decode(&encoded, &create_test_limits()).unwrap();
 
         assert_eq!(header.record_count, decoded.record_count);
         assert_eq!(header.fields.len(), decoded.fields.len());
@@ -363,8 +378,14 @@ mod tests {
             assert_eq!(original.value_count_present, decoded.value_count_present);
             assert_eq!(original.encoding_flags, decoded.encoding_flags);
             assert_eq!(original.dict_entry_count, decoded.dict_entry_count);
-            assert_eq!(original.segment_uncompressed_len, decoded.segment_uncompressed_len);
-            assert_eq!(original.segment_compressed_len, decoded.segment_compressed_len);
+            assert_eq!(
+                original.segment_uncompressed_len,
+                decoded.segment_uncompressed_len
+            );
+            assert_eq!(
+                original.segment_compressed_len,
+                decoded.segment_compressed_len
+            );
             assert_eq!(original.segment_offset, decoded.segment_offset);
         }
 
@@ -379,7 +400,8 @@ mod tests {
         };
 
         let encoded = header.encode().unwrap();
-        let (decoded, bytes_consumed) = BlockHeader::decode(&encoded, &create_test_limits()).unwrap();
+        let (decoded, bytes_consumed) =
+            BlockHeader::decode(&encoded, &create_test_limits()).unwrap();
 
         assert_eq!(header.record_count, decoded.record_count);
         assert_eq!(header.fields.len(), decoded.fields.len());
@@ -434,7 +456,8 @@ mod tests {
     #[test]
     fn test_block_header_limit_exceeded_fields() {
         let mut fields = Vec::new();
-        for i in 0..5000 { // Exceeds limit
+        for i in 0..5000 {
+            // Exceeds limit
             fields.push(FieldDirectoryEntry {
                 field_name: format!("field_{}", i),
                 compressor: 1,
@@ -623,20 +646,45 @@ mod tests {
         };
 
         let encoded = header.encode().unwrap();
-        let (decoded, bytes_consumed) = BlockHeader::decode(&encoded, &create_test_limits()).unwrap();
+        let (decoded, bytes_consumed) =
+            BlockHeader::decode(&encoded, &create_test_limits()).unwrap();
 
         assert_eq!(header.record_count, decoded.record_count);
         assert_eq!(header.fields[0].field_name, decoded.fields[0].field_name);
         assert_eq!(header.fields[0].compressor, decoded.fields[0].compressor);
-        assert_eq!(header.fields[0].compression_level, decoded.fields[0].compression_level);
-        assert_eq!(header.fields[0].presence_bytes, decoded.fields[0].presence_bytes);
+        assert_eq!(
+            header.fields[0].compression_level,
+            decoded.fields[0].compression_level
+        );
+        assert_eq!(
+            header.fields[0].presence_bytes,
+            decoded.fields[0].presence_bytes
+        );
         assert_eq!(header.fields[0].tag_bytes, decoded.fields[0].tag_bytes);
-        assert_eq!(header.fields[0].value_count_present, decoded.fields[0].value_count_present);
-        assert_eq!(header.fields[0].encoding_flags, decoded.fields[0].encoding_flags);
-        assert_eq!(header.fields[0].dict_entry_count, decoded.fields[0].dict_entry_count);
-        assert_eq!(header.fields[0].segment_uncompressed_len, decoded.fields[0].segment_uncompressed_len);
-        assert_eq!(header.fields[0].segment_compressed_len, decoded.fields[0].segment_compressed_len);
-        assert_eq!(header.fields[0].segment_offset, decoded.fields[0].segment_offset);
+        assert_eq!(
+            header.fields[0].value_count_present,
+            decoded.fields[0].value_count_present
+        );
+        assert_eq!(
+            header.fields[0].encoding_flags,
+            decoded.fields[0].encoding_flags
+        );
+        assert_eq!(
+            header.fields[0].dict_entry_count,
+            decoded.fields[0].dict_entry_count
+        );
+        assert_eq!(
+            header.fields[0].segment_uncompressed_len,
+            decoded.fields[0].segment_uncompressed_len
+        );
+        assert_eq!(
+            header.fields[0].segment_compressed_len,
+            decoded.fields[0].segment_compressed_len
+        );
+        assert_eq!(
+            header.fields[0].segment_offset,
+            decoded.fields[0].segment_offset
+        );
         assert_eq!(bytes_consumed, encoded.len());
     }
 }

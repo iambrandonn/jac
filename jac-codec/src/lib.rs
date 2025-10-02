@@ -10,21 +10,23 @@
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod block_builder;
+pub mod block_decode;
 pub mod column;
 pub mod segment;
-pub mod block_builder;
 pub mod segment_decode;
-pub mod block_decode;
 
 // Re-export commonly used types
-pub use jac_format::{JacError, Result, Limits, TypeTag, Decimal, BlockHeader, FieldDirectoryEntry};
+pub use jac_format::{
+    BlockHeader, Decimal, FieldDirectoryEntry, JacError, Limits, Result, TypeTag,
+};
 
 // Re-export our own types
+pub use block_builder::{BlockBuilder, BlockData};
+pub use block_decode::{BlockDecoder, DecompressOpts};
 pub use column::{ColumnBuilder, FieldSegment};
 pub use segment::FieldSegment as Segment;
-pub use block_builder::{BlockBuilder, BlockData};
 pub use segment_decode::FieldSegmentDecoder;
-pub use block_decode::{BlockDecoder, DecompressOpts};
 
 // Compression options
 
@@ -95,4 +97,3 @@ impl Codec {
         }
     }
 }
-

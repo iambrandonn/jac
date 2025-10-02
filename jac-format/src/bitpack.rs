@@ -72,7 +72,8 @@ impl TagPacker {
     /// Push a 3-bit tag
     pub fn push(&mut self, tag: u8) {
         assert!(tag < 8, "Tag must be < 8");
-        self.bits.extend_from_bitslice(&tag.view_bits::<Lsb0>()[..3]);
+        self.bits
+            .extend_from_bitslice(&tag.view_bits::<Lsb0>()[..3]);
     }
 
     /// Finish packing and return bytes
@@ -247,4 +248,3 @@ mod tests {
         packer.push(8); // Should panic
     }
 }
-

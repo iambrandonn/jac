@@ -31,8 +31,13 @@ impl TypeTag {
             4 => Ok(TypeTag::String),
             5 => Ok(TypeTag::Object),
             6 => Ok(TypeTag::Array),
-            7 => Err(crate::error::JacError::UnsupportedFeature("Reserved type tag 7".to_string())),
-            _ => Err(crate::error::JacError::UnsupportedFeature(format!("Unknown type tag: {}", val))),
+            7 => Err(crate::error::JacError::UnsupportedFeature(
+                "Reserved type tag 7".to_string(),
+            )),
+            _ => Err(crate::error::JacError::UnsupportedFeature(format!(
+                "Unknown type tag: {}",
+                val
+            ))),
         }
     }
 }
@@ -83,4 +88,3 @@ mod tests {
         assert_eq!(TypeTag::Array as u8, 6);
     }
 }
-

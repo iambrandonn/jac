@@ -1,10 +1,7 @@
 //! Block builder for aggregating columns
 
-use crate::{CompressOpts, ColumnBuilder};
-use jac_format::{
-    BlockHeader, FieldDirectoryEntry, Result, JacError,
-    checksum::compute_crc32c,
-};
+use crate::{ColumnBuilder, CompressOpts};
+use jac_format::{checksum::compute_crc32c, BlockHeader, FieldDirectoryEntry, JacError, Result};
 use serde_json;
 use std::collections::HashMap;
 
@@ -51,7 +48,8 @@ impl BlockBuilder {
             }
 
             // Get or create column builder for this field
-            let column_builder = self.column_builders
+            let column_builder = self
+                .column_builders
                 .entry(field_name.clone())
                 .or_insert_with(|| ColumnBuilder::new(self.opts.block_target_records));
 
@@ -67,8 +65,8 @@ impl BlockBuilder {
 
     /// Check if block is full
     pub fn is_full(&self) -> bool {
-        self.records.len() >= self.opts.block_target_records ||
-        self.estimated_memory >= self.opts.limits.max_block_uncompressed_total
+        self.records.len() >= self.opts.block_target_records
+            || self.estimated_memory >= self.opts.limits.max_block_uncompressed_total
     }
 
     /// Finalize block and create block data
@@ -89,7 +87,7 @@ impl BlockBuilder {
         for field_name in &sorted_field_names {
             if let Some(column_builder) = self.column_builders.get(field_name) {
                 // Finalize column to get field segment
-                let field_segment = column_builder.clone().finalize(&self.opts)?;
+                let field_segment = column_builder.clone().finalize(&self.opts, record_count)?;
 
                 // Compress segment
                 let compressed = field_segment.compress(
@@ -158,10 +156,16 @@ impl BlockBuilder {
             serde_json::Value::Number(n) => n.to_string().len(),
             serde_json::Value::String(s) => s.len(),
             serde_json::Value::Array(arr) => {
-                arr.iter().map(|v| self.estimate_value_memory(v)).sum::<usize>() + 8 // overhead
+                arr.iter()
+                    .map(|v| self.estimate_value_memory(v))
+                    .sum::<usize>()
+                    + 8 // overhead
             }
             serde_json::Value::Object(obj) => {
-                obj.iter().map(|(k, v)| k.len() + self.estimate_value_memory(v)).sum::<usize>() + 8 // overhead
+                obj.iter()
+                    .map(|(k, v)| k.len() + self.estimate_value_memory(v))
+                    .sum::<usize>()
+                    + 8 // overhead
             }
         }
     }
@@ -265,7 +269,12 @@ mod tests {
         assert_eq!(block_data.header.record_count, 1);
 
         // Check that fields are sorted
-        let field_names: Vec<&String> = block_data.header.fields.iter().map(|f| &f.field_name).collect();
+        let field_names: Vec<&String> = block_data
+            .header
+            .fields
+            .iter()
+            .map(|f| &f.field_name)
+            .collect();
         assert_eq!(field_names, vec!["apple", "banana", "zebra"]);
     }
 

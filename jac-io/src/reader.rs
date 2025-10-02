@@ -25,7 +25,11 @@ impl<R: std::io::Read + std::io::Seek> JacReader<R> {
     }
 
     /// Project field
-    pub fn project_field(&mut self, _block: &BlockHandle, _field: &str) -> Result<FieldIterator, jac_format::JacError> {
+    pub fn project_field(
+        &mut self,
+        _block: &BlockHandle,
+        _field: &str,
+    ) -> Result<FieldIterator, jac_format::JacError> {
         // TODO: Implement field projection
         Ok(FieldIterator {
             // TODO: Initialize fields

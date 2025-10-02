@@ -10,10 +10,9 @@
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
 
-pub mod writer;
-pub mod reader;
 pub mod parallel;
+pub mod reader;
+pub mod writer;
 
 // Re-export commonly used types
-pub use jac_format::{JacError, Result, Limits, TypeTag};
-
+pub use jac_format::{JacError, Limits, Result, TypeTag};

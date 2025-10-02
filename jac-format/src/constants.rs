@@ -33,6 +33,5 @@ pub const TAG_RESERVED: u8 = 7;
 /// Encoding flags bitfield (per field segment)
 pub const ENCODING_FLAG_DICTIONARY: u64 = 1 << 0;
 pub const ENCODING_FLAG_DELTA: u64 = 1 << 1;
-pub const ENCODING_FLAG_RLE: u64 = 1 << 2;      // reserved
+pub const ENCODING_FLAG_RLE: u64 = 1 << 2; // reserved
 pub const ENCODING_FLAG_BIT_PACKED: u64 = 1 << 3; // reserved
-

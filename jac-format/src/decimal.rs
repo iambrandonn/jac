@@ -1,6 +1,6 @@
 //! Arbitrary-precision decimal encoding
 
-use crate::varint::{encode_uleb128, decode_uleb128, zigzag_encode, zigzag_decode};
+use crate::varint::{decode_uleb128, encode_uleb128, zigzag_decode, zigzag_encode};
 
 /// Decimal number with exact representation
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,7 +40,8 @@ impl Decimal {
         let (mantissa, exponent) = if let Some(e_pos) = s.find('e').or_else(|| s.find('E')) {
             let mantissa = &s[..e_pos];
             let exp_str = &s[e_pos + 1..];
-            let exp: i32 = exp_str.parse()
+            let exp: i32 = exp_str
+                .parse()
                 .map_err(|_| crate::error::JacError::CorruptBlock)?;
             (mantissa, exp)
         } else {
@@ -58,7 +59,9 @@ impl Decimal {
 
         // Check digit count limit
         if digits.len() > 65536 {
-            return Err(crate::error::JacError::LimitExceeded("Too many decimal digits".to_string()));
+            return Err(crate::error::JacError::LimitExceeded(
+                "Too many decimal digits".to_string(),
+            ));
         }
 
         Ok(Self {
@@ -241,7 +244,9 @@ impl Decimal {
         pos += len_bytes;
 
         if digits_len > 65536 {
-            return Err(crate::error::JacError::LimitExceeded("Too many decimal digits".to_string()));
+            return Err(crate::error::JacError::LimitExceeded(
+                "Too many decimal digits".to_string(),
+            ));
         }
 
         if pos + digits_len as usize > bytes.len() {
@@ -269,11 +274,14 @@ impl Decimal {
             return Err(crate::error::JacError::CorruptBlock);
         }
 
-        Ok((Self {
-            sign,
-            digits,
-            exponent: exponent as i32,
-        }, pos))
+        Ok((
+            Self {
+                sign,
+                digits,
+                exponent: exponent as i32,
+            },
+            pos,
+        ))
     }
 }
 
@@ -343,15 +351,11 @@ mod tests {
     #[test]
     fn test_decimal_roundtrip() {
         let cases = vec![
-            "0",
-            "123",
-            "-123",
-            "0.5",
-            "-0.5",
-            "1000", // Use "1000" instead of "1e3" to avoid scientific notation
-            "-1000", // Use "-1000" instead of "-1e3"
-            "150", // Use "150" instead of "1.5e2"
-            "0.001", // Use "0.001" instead of "1e-3"
+            "0", "123", "-123", "0.5", "-0.5",
+            "1000",   // Use "1000" instead of "1e3" to avoid scientific notation
+            "-1000",  // Use "-1000" instead of "-1e3"
+            "150",    // Use "150" instead of "1.5e2"
+            "0.001",  // Use "0.001" instead of "1e-3"
             "-0.001", // Use "-0.001" instead of "-1e-3"
         ];
 
@@ -365,15 +369,7 @@ mod tests {
 
     #[test]
     fn test_decimal_encode_decode() {
-        let cases = vec![
-            "0",
-            "123",
-            "-123",
-            "0.5",
-            "-0.5",
-            "1e3",
-            "-1e3",
-        ];
+        let cases = vec!["0", "123", "-123", "0.5", "-0.5", "1e3", "-1e3"];
 
         for input in cases {
             let decimal = Decimal::from_str_exact(input).unwrap();
