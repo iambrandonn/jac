@@ -5,9 +5,15 @@ use jac_format::varint::{decode_uleb128, encode_uleb128};
 use jac_format::{
     constants::FLAG_NESTED_OPAQUE, BlockHeader, FieldDirectoryEntry, FileHeader, JacError, Limits,
 };
-use jac_io::JacReader;
+use jac_io::{
+    execute_compress, execute_decompress, execute_project, CompressOptions, CompressRequest,
+    DecompressFormat, DecompressOptions, DecompressRequest, InputSource, JacInput, JacReader,
+    OutputSink, ProjectFormat, ProjectRequest,
+};
 use serde_json::{json, Map, Value};
 use std::io::Cursor;
+use std::io::{self, Write};
+use std::path::PathBuf;
 
 fn map_from(value: Value) -> Map<String, Value> {
     value.as_object().expect("object").clone()
@@ -217,6 +223,64 @@ fn reader_reports_dictionary_index_error() {
 }
 
 #[test]
+fn reader_reports_decompress_error() {
+    let (file_header, mut block_header, segments) = build_block(&[json!({"msg": "hi"})]);
+
+    for entry in block_header.fields.iter_mut() {
+        entry.compressor = 1; // pretend segment is zstd-compressed
+    }
+
+    let bytes = encode_file(&file_header, &block_header, &segments, false);
+    let mut reader = JacReader::new(Cursor::new(bytes), default_decode_opts()).expect("reader");
+    let mut stream = reader.record_stream().expect("record stream");
+
+    match stream.next() {
+        Some(Err(JacError::DecompressError(message))) => {
+            assert!(message.to_lowercase().contains("zstd"));
+        }
+        other => panic!("expected DecompressError, got {:?}", other),
+    }
+}
+
+#[test]
+fn compress_invalid_ndjson_reports_json_error() {
+    let request = CompressRequest {
+        input: InputSource::NdjsonReader(Box::new(Cursor::new(b"{invalid}\n".to_vec()))),
+        output: OutputSink::Writer(Box::new(Cursor::new(Vec::new()))),
+        options: CompressOptions::default(),
+        emit_index: false,
+    };
+
+    match execute_compress(request) {
+        Err(JacError::Json(_)) => {}
+        Err(err) => panic!("expected Json error, got {err:?}"),
+        Ok(_) => panic!("expected Json error, got Ok"),
+    }
+}
+
+#[test]
+fn reader_reports_corrupt_header() {
+    let (file_header, block_header, segments) = build_block(&[json!({"msg": "hi"})]);
+    let mut corrupt_header = file_header.clone();
+    corrupt_header.user_metadata = vec![0, 0];
+
+    let mut bytes = corrupt_header.encode().expect("encode header");
+    let mut block_bytes = block_header.encode().expect("encode block header");
+    for segment in &segments {
+        block_bytes.extend_from_slice(segment);
+    }
+    let crc = jac_format::checksum::compute_crc32c(&block_bytes);
+    block_bytes.extend_from_slice(&crc.to_le_bytes());
+    bytes.extend_from_slice(&block_bytes);
+
+    match JacReader::new(Cursor::new(bytes), default_decode_opts()) {
+        Err(JacError::CorruptHeader) => {}
+        Err(err) => panic!("expected CorruptHeader, got {err:?}"),
+        Ok(_) => panic!("expected CorruptHeader, got Ok"),
+    }
+}
+
+#[test]
 fn reader_rejects_invalid_magic() {
     let (file_header, block_header, segments) = build_block(&[json!({"id": 1})]);
     let mut bytes = encode_file(&file_header, &block_header, &segments, false);
@@ -232,7 +296,6 @@ fn reader_rejects_invalid_magic() {
 
 #[test]
 fn reader_rejects_corrupt_block_header() {
-    let (file_header, block_header, segments) = build_block(&[json!({"id": 1})]);
     let (file_header, block_header, segments) = build_block(&[json!({"id": 1})]);
     let mut bytes = file_header.encode().expect("encode header");
     let mut block_bytes = block_header.encode().expect("encode block");
@@ -254,5 +317,111 @@ fn reader_rejects_corrupt_block_header() {
     match stream.next() {
         Some(Err(JacError::CorruptBlock)) => {}
         other => panic!("expected CorruptBlock, got {:?}", other),
+    }
+}
+
+#[test]
+fn reader_rejects_unsupported_version() {
+    let (file_header, block_header, segments) = build_block(&[json!({"id": 1})]);
+    let mut bytes = encode_file(&file_header, &block_header, &segments, false);
+    bytes[3] = bytes[3].wrapping_add(1);
+
+    match JacReader::new(Cursor::new(bytes), default_decode_opts()) {
+        Err(JacError::UnsupportedVersion(v)) => {
+            assert_eq!(v, jac_format::constants::FILE_MAGIC[3].wrapping_add(1));
+        }
+        Err(err) => panic!("expected UnsupportedVersion, got {err:?}"),
+        Ok(_) => panic!("expected UnsupportedVersion, got Ok"),
+    }
+}
+
+#[test]
+fn compress_json_array_type_mismatch() {
+    let request = CompressRequest {
+        input: InputSource::JsonArrayReader(Box::new(Cursor::new(Vec::from(
+            b"{\"id\":1}\n" as &[u8],
+        )))),
+        output: OutputSink::Writer(Box::new(Cursor::new(Vec::new()))),
+        options: CompressOptions::default(),
+        emit_index: true,
+    };
+
+    match execute_compress(request) {
+        Err(JacError::TypeMismatch) => {}
+        Err(err) => panic!("expected TypeMismatch, got {err:?}"),
+        Ok(_) => panic!("expected TypeMismatch, got Ok"),
+    }
+}
+
+#[test]
+fn compress_missing_file_reports_io_error() {
+    let request = CompressRequest {
+        input: InputSource::NdjsonPath(PathBuf::from("/definitely/missing.ndjson")),
+        output: OutputSink::Writer(Box::new(Cursor::new(Vec::new()))),
+        options: CompressOptions::default(),
+        emit_index: false,
+    };
+
+    match execute_compress(request) {
+        Err(JacError::Io(err)) => {
+            assert_eq!(err.kind(), io::ErrorKind::NotFound);
+        }
+        Err(err) => panic!("expected Io error, got {err:?}"),
+        Ok(_) => panic!("expected Io error, got Ok"),
+    }
+}
+
+#[test]
+fn project_empty_fields_reports_internal_error() {
+    let (file_header, block_header, segments) = build_block(&[json!({"value": 42})]);
+    let bytes = encode_file(&file_header, &block_header, &segments, false);
+
+    let request = ProjectRequest {
+        input: JacInput::Reader(Box::new(Cursor::new(bytes))),
+        output: OutputSink::Writer(Box::new(Cursor::new(Vec::new()))),
+        fields: Vec::new(),
+        format: ProjectFormat::Ndjson,
+        options: DecompressOptions::default(),
+    };
+
+    match execute_project(request) {
+        Err(JacError::Internal(message)) => {
+            assert!(message.contains("project request"));
+        }
+        Err(err) => panic!("expected Internal error, got {err:?}"),
+        Ok(_) => panic!("expected Internal error, got Ok"),
+    }
+}
+
+struct FailingWriter;
+
+impl Write for FailingWriter {
+    fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+        Err(io::Error::new(io::ErrorKind::Other, "sink failure"))
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Err(io::Error::new(io::ErrorKind::Other, "flush failure"))
+    }
+}
+
+#[test]
+fn decompress_reports_io_error_on_output_failure() {
+    let (file_header, block_header, segments) = build_block(&[json!({"v": 1})]);
+    let bytes = encode_file(&file_header, &block_header, &segments, false);
+
+    let request = DecompressRequest {
+        input: JacInput::Reader(Box::new(Cursor::new(bytes))),
+        output: OutputSink::Writer(Box::new(FailingWriter)),
+        format: DecompressFormat::Ndjson,
+        options: DecompressOptions::default(),
+    };
+
+    match execute_decompress(request) {
+        Err(JacError::Io(err)) => {
+            assert_eq!(err.kind(), io::ErrorKind::Other);
+        }
+        Err(err) => panic!("expected Io error, got {err:?}"),
+        Ok(_) => panic!("expected Io error, got Ok"),
     }
 }

@@ -57,8 +57,13 @@ impl FileHeader {
         }
 
         // Magic bytes
-        if bytes[pos..pos + 4] != FILE_MAGIC {
+        let magic = &bytes[pos..pos + 4];
+        if magic[..3] != FILE_MAGIC[..3] {
             return Err(crate::error::JacError::InvalidMagic);
+        }
+        let version = magic[3];
+        if version != FILE_MAGIC[3] {
+            return Err(crate::error::JacError::UnsupportedVersion(version));
         }
         pos += 4;
 
@@ -201,6 +206,27 @@ mod tests {
         assert_eq!(header.flags, decoded.flags);
         assert_eq!(header.user_metadata, decoded.user_metadata);
         assert_eq!(bytes_consumed, encoded.len());
+    }
+
+    #[test]
+    fn test_file_header_unsupported_version() {
+        let header = FileHeader {
+            flags: 0,
+            default_compressor: 1,
+            default_compression_level: 3,
+            block_size_hint_records: 1,
+            user_metadata: Vec::new(),
+        };
+
+        let mut encoded = header.encode().unwrap();
+        encoded[3] = FILE_MAGIC[3] + 1;
+
+        match FileHeader::decode(&encoded).unwrap_err() {
+            crate::error::JacError::UnsupportedVersion(v) => {
+                assert_eq!(v, FILE_MAGIC[3] + 1);
+            }
+            other => panic!("expected UnsupportedVersion, got {other:?}"),
+        }
     }
 
     #[test]

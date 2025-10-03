@@ -11,6 +11,7 @@ cargo-fuzz = true
 libfuzzer-sys = { version = "0.4", features = ["arbitrary-derive"] }
 jac-codec = { path = ".." }
 jac-format = { path = "../jac-format" }
+serde_json = "1.0"
 
 [[bin]]
 name = "fuzz_decode_block"
@@ -21,5 +22,23 @@ doc = false
 [[bin]]
 name = "fuzz_varint"
 path = "fuzz_targets/fuzz_varint.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_projection"
+path = "fuzz_targets/fuzz_projection.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_compression"
+path = "fuzz_targets/fuzz_compression.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_bitpack"
+path = "fuzz_targets/fuzz_bitpack.rs"
 test = false
 doc = false

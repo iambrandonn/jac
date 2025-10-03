@@ -211,6 +211,46 @@ fn cat_unknown_field_fails() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
+fn pack_accepts_bom_prefixed_ndjson() -> Result<(), Box<dyn Error>> {
+    let dir = tempfile::tempdir()?;
+    let input_path = dir.path().join("bom.ndjson");
+    let jac_path = dir.path().join("bom.jac");
+
+    let mut file = fs::File::create(&input_path)?;
+    file.write_all("\u{feff}{\"value\":1}\r\n".as_bytes())?;
+    file.write_all("{\"value\":2}\n".as_bytes())?;
+    file.write_all("{\"value\":3}".as_bytes())?;
+
+    assert_cmd::Command::cargo_bin("jac")?
+        .args([
+            "pack",
+            input_path.to_str().unwrap(),
+            "-o",
+            jac_path.to_str().unwrap(),
+            "--ndjson",
+        ])
+        .assert()
+        .success();
+
+    let output = assert_cmd::Command::cargo_bin("jac")?
+        .args(["cat", jac_path.to_str().unwrap(), "--field", "value"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let values: Vec<i64> = String::from_utf8(output)?
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .map(|value| value.as_i64().unwrap())
+        .collect();
+    assert_eq!(values, vec![1, 2, 3]);
+
+    Ok(())
+}
+
+#[test]
 fn spec_fixture_cli_conformance() -> Result<(), Box<dyn Error>> {
     let fixture = spec_fixture_path();
     let expected_records = load_fixture_values(&fixture)?;

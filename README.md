@@ -123,6 +123,10 @@ JAC enforces strict limits to prevent decompression bombs:
 
 Fuzz targets live under `jac-codec/fuzz/`. Once `cargo-fuzz` is installed, run for example `cargo fuzz run fuzz_decode_block` to stress the block decoder.
 
+**Suggested pre-submit checklist:**
+- `cargo test --all`
+- `cargo run -p xtask`
+
 ## Development Status
 
 **Current Phase:** Phase 9 (Testing & Validation) – expanding conformance, compliance tracking, and fuzz coverage

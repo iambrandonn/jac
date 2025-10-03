@@ -642,6 +642,12 @@ impl Iterator for NdjsonStream {
             match self.reader.read_line(&mut self.buffer) {
                 Ok(0) => return None,
                 Ok(_) => {
+                    if self.buffer.starts_with('\u{feff}') {
+                        let bom_len = '\u{feff}'.len_utf8();
+                        if self.buffer.len() >= bom_len {
+                            self.buffer.drain(..bom_len);
+                        }
+                    }
                     if self.buffer.trim().is_empty() {
                         continue;
                     }
@@ -866,6 +872,26 @@ mod tests {
         assert_eq!(first.get("a").unwrap(), &Value::from(1));
         let second = stream.next().unwrap().unwrap();
         assert_eq!(second.get("b").unwrap(), &Value::from(2));
+        assert!(stream.next().is_none());
+    }
+
+    #[test]
+    fn ndjson_input_handles_bom_and_mixed_newlines() {
+        let data = "\u{feff}{\"a\":1}\r\n\r\n{\"b\":2}\n{\"c\":3}";
+        let reader = Cursor::new(data.as_bytes().to_vec());
+        let mut stream = InputSource::NdjsonReader(Box::new(reader))
+            .into_record_stream()
+            .unwrap();
+
+        let first = stream.next().unwrap().unwrap();
+        assert_eq!(first.get("a"), Some(&Value::from(1)));
+
+        let second = stream.next().unwrap().unwrap();
+        assert_eq!(second.get("b"), Some(&Value::from(2)));
+
+        let third = stream.next().unwrap().unwrap();
+        assert_eq!(third.get("c"), Some(&Value::from(3)));
+
         assert!(stream.next().is_none());
     }
 

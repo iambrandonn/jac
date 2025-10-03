@@ -153,8 +153,11 @@ impl<R: Read + Seek> JacReader<R> {
         // Fixed portion of the header (magic + flags + compressor + level)
         let mut fixed = [0u8; 10];
         reader.read_exact(&mut fixed)?;
-        if fixed[..4] != FILE_MAGIC {
+        if fixed[..3] != FILE_MAGIC[..3] {
             return Err(JacError::InvalidMagic);
+        }
+        if fixed[3] != FILE_MAGIC[3] {
+            return Err(JacError::UnsupportedVersion(fixed[3]));
         }
         header_bytes.extend_from_slice(&fixed);
 
@@ -166,6 +169,9 @@ impl<R: Read + Seek> JacReader<R> {
 
         let mut metadata = vec![0u8; metadata_len as usize];
         reader.read_exact(&mut metadata)?;
+        if metadata.iter().all(|&byte| byte == 0) && !metadata.is_empty() {
+            return Err(JacError::CorruptHeader);
+        }
         header_bytes.extend_from_slice(&metadata);
 
         let (header, consumed) = FileHeader::decode(&header_bytes)?;

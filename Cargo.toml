@@ -4,6 +4,7 @@ members = [
     "jac-codec",
     "jac-io",
     "jac-cli",
+    "jac-test-utils",
     "xtask"
 ]
 

@@ -8,3 +8,56 @@ ERR-UNSUPPORTED-CODEC,§4.6,Unknown compressor rejected with `UnsupportedCompres
 ERR-INVALID-MAGIC,§8,Invalid magic bytes rejected at reader initialization,jac-io/src/reader.rs,jac-io/tests/error_cases.rs::reader_rejects_invalid_magic
 ERR-LIMIT-STRING,Addendum §2.1,String length limit enforced before allocation,jac-io/src/reader.rs;jac-format/src/limits.rs,jac-io/tests/error_cases.rs::reader_enforces_string_length_limit
 ERR-CORRUPT-BLOCK,§8,Corrupted block header detected during iteration,jac-io/src/reader.rs;jac-format/src/block.rs,jac-io/tests/error_cases.rs::reader_rejects_corrupt_block_header
+ERR-UNEXPECTED-EOF,§8,Truncated block surfaces `UnexpectedEof`,jac-io/src/reader.rs,jac-io/tests/error_cases.rs::reader_reports_unexpected_eof_for_truncated_block
+ERR-RESERVED-TAG,§4.3,Reserved type tag 7 rejected with `UnsupportedFeature`,jac-codec/src/segment_decode.rs;jac-io/src/reader.rs,jac-io/tests/error_cases.rs::reader_reports_reserved_type_tag
+ERR-DECOMPRESS,§4.6,Invalid compressed payload surfaces `DecompressError`,jac-codec/src/segment_decode.rs;jac-io/src/reader.rs,jac-io/tests/error_cases.rs::reader_reports_decompress_error
+ERR-TYPE-MISMATCH,§8,JSON-array input validation raises `TypeMismatch`,jac-io/src/lib.rs,jac-io/tests/error_cases.rs::compress_json_array_type_mismatch
+ERR-UNSUPPORTED-VERSION,§8,Future file version rejected during header decode,jac-format/src/header.rs;jac-io/src/reader.rs,jac-io/tests/error_cases.rs::reader_rejects_unsupported_version
+ERR-CORRUPT-HEADER,§8,Corrupted file header rejected before block decode,jac-format/src/header.rs;jac-io/src/reader.rs,jac-io/tests/error_cases.rs::reader_reports_corrupt_header
+ERR-JSON-INPUT,§4,Invalid NDJSON input rejected with `Json` error,jac-io/src/lib.rs,jac-io/tests/error_cases.rs::compress_invalid_ndjson_reports_json_error
+ERR-IO-OUTPUT,§8,Decompression propagates sink I/O failures as `Io`,jac-io/src/lib.rs,jac-io/tests/error_cases.rs::decompress_reports_io_error_on_output_failure
+ERR-IO-INPUT,§4,Missing input path surfaces `Io` during compression,jac-io/src/lib.rs,jac-io/tests/error_cases.rs::compress_missing_file_reports_io_error
+ERR-INTERNAL-PROJECT,§8,Invalid project request yields `Internal` error,jac-io/src/lib.rs,jac-io/tests/error_cases.rs::project_empty_fields_reports_internal_error
+CLI-MISSING-FIELD,§8,CLI `cat` surfaces available fields when request is invalid,jac-cli/src/main.rs,jac-cli/tests/cli.rs::cat_unknown_field_fails
+CLI-NDJSON-BOM,§4,CLI `pack --ndjson` accepts BOM-prefixed input,jac-cli/src/main.rs,jac-cli/tests/cli.rs::pack_accepts_bom_prefixed_ndjson
+CLI-INVALID-FORMAT,§8,CLI rejects unsupported `pack` flags with helpful diagnostic,jac-cli/src/main.rs,jac-cli/tests/missing/mod.rs::pack_with_unknown_format_flag_fails
+ERR-MATRIX-INVALID-MAGIC,§8,Invalid magic bytes rejected with `InvalidMagic`,jac-io/src/reader.rs,jac-io/tests/error_matrix.rs::test_invalid_magic
+ERR-MATRIX-UNSUPPORTED-VERSION,§8,Unsupported version rejected with `UnsupportedVersion`,jac-format/src/header.rs,jac-io/tests/error_matrix.rs::test_unsupported_version
+ERR-MATRIX-CORRUPT-HEADER,§8,Corrupt header metadata rejected with `CorruptHeader`,jac-io/src/reader.rs,jac-io/tests/error_matrix.rs::test_corrupt_header
+ERR-MATRIX-CORRUPT-BLOCK,§8,Corrupt block header rejected with `CorruptBlock`,jac-format/src/block.rs,jac-io/tests/error_matrix.rs::test_corrupt_block
+ERR-MATRIX-CHECKSUM-MISMATCH,§8,Checksum mismatch rejected with `ChecksumMismatch`,jac-io/src/reader.rs,jac-io/tests/error_matrix.rs::test_checksum_mismatch
+ERR-MATRIX-UNEXPECTED-EOF,§8,Truncated input rejected with `UnexpectedEof`,jac-io/src/reader.rs,jac-io/tests/error_matrix.rs::test_unexpected_eof
+ERR-MATRIX-DECOMPRESS-ERROR,§8,Decompression failure rejected with `DecompressError`,jac-codec/src/segment_decode.rs,jac-io/tests/error_matrix.rs::test_decompress_error
+ERR-MATRIX-LIMIT-EXCEEDED,§8,Limit exceeded rejected with `LimitExceeded`,jac-format/src/limits.rs,jac-io/tests/error_matrix.rs::test_limit_exceeded
+ERR-MATRIX-TYPE-MISMATCH,§8,Type mismatch rejected with `TypeMismatch`,jac-io/src/lib.rs,jac-io/tests/error_matrix.rs::test_type_mismatch
+ERR-MATRIX-DICTIONARY-ERROR,§8,Dictionary index error rejected with `DictionaryError`,jac-codec/src/segment_decode.rs,jac-io/tests/error_matrix.rs::test_dictionary_error
+ERR-MATRIX-UNSUPPORTED-FEATURE,§8,Unsupported feature rejected with `UnsupportedFeature`,jac-codec/src/segment_decode.rs,jac-io/tests/error_matrix.rs::test_unsupported_feature
+ERR-MATRIX-UNSUPPORTED-COMPRESSION,§8,Unsupported compression rejected with `UnsupportedCompression`,jac-codec/src/segment.rs,jac-io/tests/error_matrix.rs::test_unsupported_compression
+ERR-MATRIX-IO-INPUT,§8,Input I/O error propagated as `Io`,jac-io/src/lib.rs,jac-io/tests/error_matrix.rs::test_io_input_error
+ERR-MATRIX-IO-OUTPUT,§8,Output I/O error propagated as `Io`,jac-io/src/lib.rs,jac-io/tests/error_matrix.rs::test_io_output_error
+ERR-MATRIX-JSON-ERROR,§8,JSON parsing error propagated as `Json`,jac-io/src/lib.rs,jac-io/tests/error_matrix.rs::test_json_error
+ERR-MATRIX-INTERNAL-ERROR,§8,Internal error rejected with `Internal`,jac-io/src/lib.rs,jac-io/tests/error_matrix.rs::test_internal_error
+SPEC-3.4-BLOCK-CRC,§3.4,"Block CRC32C MUST be verified",jac-io/src/reader.rs,jac-io/tests/error_cases.rs::reader_reports_checksum_mismatch
+SPEC-4.5-DECIMAL-EXACT,§4.5,"Numbers MUST round-trip as exact numeric values",jac-codec/tests/conformance.rs::high_precision_decimals
+SPEC-4.5-STRING-EXACT,§4.5,"Strings MUST round-trip byte-exact (UTF-8)",jac-codec/tests/conformance.rs::unicode_edge_cases
+SPEC-4.5-ABSENT-NULL,§4.5,"Absent vs Null MUST be preserved",jac-io/tests/integration_tests.rs::projection_handles_absent_and_null
+SPEC-4.6-COMPRESSOR-SUPPORT,§4.6,"Decoders MUST support at least id=0 (none) and id=1 (zstd)",jac-codec/src/segment.rs,jac-io/tests/error_cases.rs::reader_reports_unsupported_compression
+SPEC-4.7-SEGMENT-ORDER,§4.7,"Segment payload MUST appear in specified order",jac-codec/src/column.rs,jac-codec/tests/conformance.rs::multi_level_validation
+SPEC-8-INTEGRITY,§8,"Block CRC32C MUST be verified",jac-io/src/reader.rs,jac-io/tests/error_cases.rs::reader_reports_checksum_mismatch
+SPEC-8-BOUNDS,§8,"Decoders MUST enforce sane limits",jac-format/src/limits.rs,jac-io/tests/error_cases.rs::reader_enforces_string_length_limit
+SPEC-8-TYPE-SAFETY,§8,"Values exceeding 64-bit integer MUST be encoded as decimal",jac-codec/tests/conformance.rs::high_precision_decimals
+SPEC-8-DICTIONARY-BOUNDS,§8,"Dictionary index out of range MUST trigger error",jac-io/tests/error_cases.rs::reader_reports_dictionary_index_error
+SPEC-8-VERSIONING,§8,"Unknown magic or major version MUST trigger UnsupportedVersion",jac-io/tests/error_cases.rs::reader_rejects_unsupported_version
+SPEC-12.1-CONFORMANCE,§12.1,"Conformance test MUST verify full round-trip equality",jac-codec/tests/conformance.rs::spec12_round_trip_matches_fixture
+SPEC-12.1-PROJECTION,§12.1,"Conformance test MUST verify projection user yields expected sequence",jac-codec/tests/conformance.rs::spec12_projection_yields_expected_sequence
+SPEC-VARINT-CAP,§4.3,"ULEB128 decode MUST cap at 10 bytes for u64",jac-format/src/varint.rs,jac-format/src/varint.rs::test_uleb128_decode_too_long
+SPEC-DECIMAL-SIGN,§4.5,"Zero MUST use sign 0",jac-format/src/decimal.rs,jac-format/src/decimal.rs::test_decimal_zero_leading_zeros
+SPEC-DECIMAL-LEADING-ZEROS,§4.5,"Decoders MUST reject leading zeros unless value is zero",jac-format/src/decimal.rs,jac-format/src/decimal.rs::test_decimal_remove_leading_zeros
+SPEC-TAG-PADDING,§4.3,"Unused high bits in final tag byte MUST be zero",jac-format/src/bitpack.rs,jac-format/src/bitpack.rs::test_tag_packer_padding
+SPEC-UNKNOWN-TAG,§8,"Unknown type tags MUST fail with UnsupportedFeature",jac-io/tests/error_cases.rs::reader_reports_reserved_type_tag
+SPEC-UNKNOWN-COMPRESSOR,§8,"Unknown compressor IDs MUST fail with UnsupportedCompression",jac-io/tests/error_cases.rs::reader_reports_unsupported_compression
+SPEC-STREAMABILITY,§5,"Writers MUST only emit complete blocks",jac-io/src/writer.rs,jac-io/tests/integration_tests.rs::writer_flush_emits_partial_blocks
+SPEC-EOF-HANDLING,§5,"EOF before block complete MUST return UnexpectedEof",jac-io/tests/error_cases.rs::reader_reports_unexpected_eof_for_truncated_block
+SPEC-DECIMAL-DIGITS-CAP,§4.5,"Decoders MUST enforce max_decimal_digits_per_value cap",jac-format/src/decimal.rs,jac-format/src/decimal.rs::test_decimal_limits
+SPEC-DICTIONARY-ENTRY-CAP,§4.4,"Dictionary entry count MUST NOT exceed max_dict_entries_per_field",jac-format/src/limits.rs,jac-codec/tests/column.rs::test_column_builder_dictionary_encoding
+SPEC-STRING-LENGTH-CAP,§4.4,"Each dictionary entry length MUST NOT exceed max_string_len_per_value",jac-format/src/limits.rs,jac-io/tests/error_cases.rs::reader_enforces_string_length_limit
