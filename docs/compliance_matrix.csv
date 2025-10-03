@@ -6,3 +6,4 @@ ERR-CHECKSUM,§8,Truncated checksum surfaces `ChecksumMismatch`,jac-io/src/reade
 ERR-DICTIONARY-OOB,§4.4,Invalid dictionary index raises `DictionaryError`,jac-io/src/reader.rs;jac-codec/src/segment_decode.rs,jac-io/tests/error_cases.rs::reader_reports_dictionary_index_error
 ERR-UNSUPPORTED-CODEC,§4.6,Unknown compressor rejected with `UnsupportedCompression`,jac-io/src/reader.rs;jac-codec/src/segment.rs,jac-io/tests/error_cases.rs::reader_reports_unsupported_compression
 ERR-INVALID-MAGIC,§8,Invalid magic bytes rejected at reader initialization,jac-io/src/reader.rs,jac-io/tests/error_cases.rs::reader_rejects_invalid_magic
+ERR-LIMIT-STRING,Addendum §2.1,String length limit enforced before allocation,jac-io/src/reader.rs;jac-format/src/limits.rs,jac-io/tests/error_cases.rs::reader_enforces_string_length_limit
