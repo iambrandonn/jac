@@ -1,6 +1,7 @@
 //! Negative decoding tests covering key `JacError` variants
 
 use jac_codec::{block_builder::BlockData, BlockBuilder, Codec, CompressOpts, DecompressOpts};
+use jac_format::varint::{decode_uleb128, encode_uleb128};
 use jac_format::{
     constants::FLAG_NESTED_OPAQUE, BlockHeader, FieldDirectoryEntry, FileHeader, JacError, Limits,
 };
@@ -172,5 +173,45 @@ fn reader_reports_checksum_mismatch() {
     match stream.next() {
         Some(Err(JacError::ChecksumMismatch)) => {}
         other => panic!("expected ChecksumMismatch, got {:?}", other),
+    }
+}
+
+#[test]
+fn reader_reports_dictionary_index_error() {
+    let (file_header, block_header, mut segments) = build_block(&[
+        json!({"user": "alice"}),
+        json!({"user": "bob"}),
+        json!({"user": "alice"}),
+    ]);
+
+    let field_index = block_header
+        .fields
+        .iter()
+        .position(|entry| entry.field_name == "user")
+        .expect("user field present");
+    let entry = &block_header.fields[field_index];
+    assert!(entry.dict_entry_count >= 2, "dictionary expected");
+
+    let mut segment = segments[field_index].clone();
+    let mut cursor = entry.presence_bytes + entry.tag_bytes;
+    for _ in 0..entry.dict_entry_count {
+        let (len, len_bytes) = decode_uleb128(&segment[cursor..]).expect("dict entry length");
+        cursor += len_bytes + len as usize;
+    }
+
+    let (_orig_index, index_bytes) = decode_uleb128(&segment[cursor..]).expect("string index");
+    let bad_index = entry.dict_entry_count as u64 + 1;
+    let bad_encoded = encode_uleb128(bad_index);
+    assert_eq!(index_bytes, bad_encoded.len(), "index byte width stable");
+    segment[cursor..cursor + index_bytes].copy_from_slice(&bad_encoded);
+
+    segments[field_index] = segment;
+    let bytes = encode_file(&file_header, &block_header, &segments, false);
+
+    let mut reader = JacReader::new(Cursor::new(bytes), default_decode_opts()).expect("reader");
+    let mut stream = reader.record_stream().expect("record stream");
+    match stream.next() {
+        Some(Err(JacError::DictionaryError)) => {}
+        other => panic!("expected DictionaryError, got {:?}", other),
     }
 }
