@@ -215,3 +215,17 @@ fn reader_reports_dictionary_index_error() {
         other => panic!("expected DictionaryError, got {:?}", other),
     }
 }
+
+#[test]
+fn reader_rejects_invalid_magic() {
+    let (file_header, block_header, segments) = build_block(&[json!({"id": 1})]);
+    let mut bytes = encode_file(&file_header, &block_header, &segments, false);
+    assert!(bytes.len() >= 4);
+    bytes[0..4].copy_from_slice(b"BADC");
+
+    match JacReader::new(Cursor::new(bytes), default_decode_opts()) {
+        Err(JacError::InvalidMagic) => {}
+        Err(err) => panic!("expected InvalidMagic, got {err:?}"),
+        Ok(_) => panic!("expected InvalidMagic, got Ok"),
+    }
+}
