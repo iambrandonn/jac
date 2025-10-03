@@ -111,14 +111,25 @@ JAC enforces strict limits to prevent decompression bombs:
 - Maximum segment size: 64 MiB (hard limit)
 - Maximum string length: 16 MiB (hard limit)
 
+## Testing
+
+| Command | Purpose |
+|---------|---------|
+| `cargo test -p jac-format` | Core format/unit coverage (varints, bitpacking, decimals) |
+| `cargo test -p jac-codec` | Codec round-trips plus SPEC §12.1 conformance checks |
+| `cargo test -p jac-io` | Streaming encoder/decoder integration + negative/error harness |
+| `cargo test -p jac-cli` | CLI smoke, pack/unpack round-trips, and SPEC fixture regression |
+| `cargo run -p xtask` | Compliance matrix sanity check (fails if a spec requirement lacks tests) |
+
+Fuzz targets live under `jac-codec/fuzz/`. Once `cargo-fuzz` is installed, run for example `cargo fuzz run fuzz_decode_block` to stress the block decoder.
+
 ## Development Status
 
-**Current Phase:** Phase 8 (CLI Tool Completion) – polishing progress/stats UX
+**Current Phase:** Phase 9 (Testing & Validation) – expanding conformance, compliance tracking, and fuzz coverage
 
-- ✅ Phases 0–7 delivered core format, codec, I/O, and request-based APIs
-- ✅ Phase 8 Week 1: `jac ls` / `jac cat` implemented with field statistics, block filtering, and progress spinners
-- ✅ Phase 8 Week 2: progress/timing summaries for pack/unpack/cat/ls, sampling-aware `--stats` output, refreshed docs & tests
-- 🔜 Next: CLI doc polish & configuration knobs for stats sampling, then move to benchmarking (see [PLAN8.md](PLAN8.md))
+- ✅ Phases 0–8 delivered format/codec/IO/CLI foundations and baseline telemetry
+- ✅ Phase 9 progress: SPEC §12.1 fixture tests across codec/CLI/IO, negative reader harness, compliance matrix scaffold (`cargo run -p xtask`)
+- 🔜 Next: broaden compliance entries, add multi-platform/nightly coverage, wire fuzz/property suites into CI (see [PLAN9.md](PLAN9.md))
 
 See [PLAN.md](PLAN.md) for the complete roadmap and phase breakdown.
 
