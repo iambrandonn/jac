@@ -3,7 +3,8 @@ members = [
     "jac-format",
     "jac-codec",
     "jac-io",
-    "jac-cli"
+    "jac-cli",
+    "xtask"
 ]
 
 resolver = "2"

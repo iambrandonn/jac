@@ -1,0 +1,7 @@
+requirement_id,spec_section,description,implementation,test_refs
+SPEC-12.1-ROUNDTRIP,§12.1,Semantic round-trip matches canonical fixture,jac-codec/tests/conformance.rs::build_spec_block,jac-codec/tests/conformance.rs::spec12_round_trip_matches_fixture
+SPEC-12.1-PROJECTION,§12.1,Projection of `user` yields canonical sequence,jac-codec/tests/conformance.rs::build_spec_block;jac-io/src/reader.rs,jac-codec/tests/conformance.rs::spec12_projection_yields_expected_sequence;jac-cli/tests/cli.rs::spec_fixture_cli_conformance
+SPEC-12.1-ENCODING,§12.1,Delta and dictionary flags set per fixture expectations,jac-codec/src/column.rs;jac-codec/src/block_builder.rs,jac-codec/tests/conformance.rs::spec12_field_encodings_match_requirements
+ERR-CHECKSUM,§8,Truncated checksum surfaces `ChecksumMismatch`,jac-io/src/reader.rs,jac-io/tests/error_cases.rs::reader_reports_checksum_mismatch
+ERR-DICTIONARY-OOB,§4.4,Invalid dictionary index raises `DictionaryError`,jac-io/src/reader.rs;jac-codec/src/segment_decode.rs,jac-io/tests/error_cases.rs::reader_reports_dictionary_index_error
+ERR-UNSUPPORTED-CODEC,§4.6,Unknown compressor rejected with `UnsupportedCompression`,jac-io/src/reader.rs;jac-codec/src/segment.rs,jac-io/tests/error_cases.rs::reader_reports_unsupported_compression
