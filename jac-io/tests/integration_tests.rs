@@ -71,6 +71,68 @@ fn sample_projection_file() -> Vec<u8> {
 }
 
 #[test]
+fn million_record_roundtrip_and_projection() {
+    const RECORDS: usize = 1_000_000;
+    let (header, mut opts) = default_compress_opts(100_000);
+    opts.default_codec = Codec::None;
+
+    let buffer = Cursor::new(Vec::<u8>::new());
+    let mut writer = JacWriter::new(buffer, header, opts).expect("writer");
+
+    for i in 0..RECORDS {
+        let mut record = Map::new();
+        record.insert("id".to_string(), Value::from(i as i64));
+        record.insert("even".to_string(), Value::Bool(i % 2 == 0));
+        writer.write_record(&record).expect("write record");
+    }
+
+    let bytes = finish_writer(writer, false);
+
+    // Ensure file materializes multiple blocks and total record count matches.
+    let opts = default_decompress_opts();
+    let mut reader = JacReader::new(Cursor::new(bytes.clone()), opts).expect("reader");
+    let blocks = reader
+        .blocks()
+        .collect::<jac_format::Result<Vec<_>>>()
+        .expect("collect blocks");
+    assert!(blocks.len() > 1, "expected multi-block corpus");
+    let block_total: usize = blocks.iter().map(|block| block.record_count).sum();
+    assert_eq!(block_total, RECORDS, "block record totals");
+
+    // Verify semantic round-trip via streaming record iterator.
+    let opts = default_decompress_opts();
+    let mut reader = JacReader::new(Cursor::new(bytes.clone()), opts).expect("reader");
+    let mut stream = reader.record_stream().expect("record stream");
+    let mut processed = 0usize;
+    while let Some(result) = stream.next() {
+        let record = result.expect("record decode");
+        let id = record.get("id").and_then(|v| v.as_i64()).expect("id");
+        assert_eq!(id as usize, processed);
+        let even = record.get("even").and_then(|v| v.as_bool()).expect("even");
+        assert_eq!(even, processed % 2 == 0);
+        processed += 1;
+    }
+    assert_eq!(processed, RECORDS, "record stream produced all records");
+
+    // Validate projection semantics for the `id` field across the entire corpus.
+    let opts = default_decompress_opts();
+    let mut reader = JacReader::new(Cursor::new(bytes), opts).expect("reader");
+    let mut projection = reader
+        .projection_stream("id".to_string())
+        .expect("projection stream");
+    for expected in 0..RECORDS {
+        match projection.next() {
+            Some(Ok(Some(Value::Number(num)))) => {
+                let id = num.as_i64().expect("numeric id");
+                assert_eq!(id as usize, expected);
+            }
+            other => panic!("unexpected projection result: {:?}", other),
+        }
+    }
+    assert!(projection.next().is_none(), "projection exhausted exactly");
+}
+
+#[test]
 fn writer_writes_index_footer_and_pointer() {
     let (header, opts) = default_compress_opts(4);
     let buffer = Cursor::new(Vec::<u8>::new());

@@ -5,16 +5,13 @@ use jac_codec::{
     block_decode::{BlockDecoder, DecompressOpts},
     BlockBuilder, Codec, CompressOpts,
 };
-use jac_format::constants::{
-    ENCODING_FLAG_DELTA, ENCODING_FLAG_DICTIONARY,
-};
+use jac_format::constants::{ENCODING_FLAG_DELTA, ENCODING_FLAG_DICTIONARY};
 use serde_json::{Map, Value};
 use std::fs;
 use std::path::PathBuf;
 
 fn fixture_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../testdata/spec/v12_1.jsonl")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../testdata/spec/v12_1.jsonl")
 }
 
 fn load_spec_records() -> Vec<Map<String, Value>> {
@@ -79,7 +76,11 @@ fn spec12_field_encodings_match_requirements() {
         .find(|entry| entry.field_name == "ts")
         .expect("ts field present");
     assert_eq!(ts_entry.value_count_present, block.header.record_count);
-    assert_ne!(ts_entry.encoding_flags & ENCODING_FLAG_DELTA, 0, "ts uses delta encoding");
+    assert_ne!(
+        ts_entry.encoding_flags & ENCODING_FLAG_DELTA,
+        0,
+        "ts uses delta encoding"
+    );
     assert_eq!(ts_entry.encoding_flags & ENCODING_FLAG_DICTIONARY, 0);
 
     let level_entry = block
@@ -121,18 +122,19 @@ fn spec12_projection_yields_expected_sequence() {
     let bytes = assemble_block_bytes(&block);
     let decoder = BlockDecoder::new(&bytes, &DecompressOpts::default()).expect("decode block");
 
-    let user_projection = decoder
-        .project_field("user")
-        .expect("project user field");
+    let user_projection = decoder.project_field("user").expect("project user field");
     let users: Vec<String> = user_projection
         .into_iter()
-        .map(|opt| opt.expect("user present").as_str().expect("string").to_owned())
+        .map(|opt| {
+            opt.expect("user present")
+                .as_str()
+                .expect("string")
+                .to_owned()
+        })
         .collect();
     assert_eq!(users, ["alice", "alice", "bob", "carol"]);
 
-    let error_projection = decoder
-        .project_field("error")
-        .expect("project error field");
+    let error_projection = decoder.project_field("error").expect("project error field");
     let mut error_values = error_projection.into_iter();
     assert!(error_values.next().unwrap().is_none());
     assert!(error_values.next().unwrap().is_none());
