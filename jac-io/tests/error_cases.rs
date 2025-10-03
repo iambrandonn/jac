@@ -229,3 +229,30 @@ fn reader_rejects_invalid_magic() {
         Ok(_) => panic!("expected InvalidMagic, got Ok"),
     }
 }
+
+#[test]
+fn reader_rejects_corrupt_block_header() {
+    let (file_header, block_header, segments) = build_block(&[json!({"id": 1})]);
+    let (file_header, block_header, segments) = build_block(&[json!({"id": 1})]);
+    let mut bytes = file_header.encode().expect("encode header");
+    let mut block_bytes = block_header.encode().expect("encode block");
+    for segment in &segments {
+        block_bytes.extend_from_slice(segment);
+    }
+    let crc = jac_format::checksum::compute_crc32c(&block_bytes);
+    block_bytes.extend_from_slice(&crc.to_le_bytes());
+
+    // Overwrite the first byte of the block magic to corrupt the header
+    if let Some(byte) = block_bytes.get_mut(0) {
+        *byte ^= 0xFF;
+    }
+
+    bytes.extend_from_slice(&block_bytes);
+
+    let mut reader = JacReader::new(Cursor::new(bytes), default_decode_opts()).expect("reader");
+    let mut stream = reader.record_stream().expect("record stream");
+    match stream.next() {
+        Some(Err(JacError::CorruptBlock)) => {}
+        other => panic!("expected CorruptBlock, got {:?}", other),
+    }
+}
