@@ -1,9 +1,11 @@
+use jac_format::constants::{ENCODING_FLAG_DELTA, ENCODING_FLAG_DICTIONARY};
 use predicates::prelude::*;
 use serde_json::Value;
+use std::collections::HashMap;
 use std::error::Error;
 use std::fs;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
 struct SampleFile {
@@ -34,6 +36,19 @@ fn build_sample_file() -> Result<SampleFile, Box<dyn Error>> {
         _dir: dir,
         jac_path,
     })
+}
+
+fn spec_fixture_path() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../testdata/spec/v12_1.jsonl")
+}
+
+fn load_fixture_values(path: &Path) -> Result<Vec<Value>, Box<dyn Error>> {
+    let contents = fs::read_to_string(path)?;
+    Ok(contents
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .collect())
 }
 
 #[test]
@@ -192,5 +207,105 @@ fn cat_unknown_field_fails() -> Result<(), Box<dyn Error>> {
         .assert()
         .failure()
         .stderr(predicate::str::contains("Available fields: level, user"));
+    Ok(())
+}
+
+#[test]
+fn spec_fixture_cli_conformance() -> Result<(), Box<dyn Error>> {
+    let fixture = spec_fixture_path();
+    let expected_records = load_fixture_values(&fixture)?;
+    let expected_users: Vec<String> = expected_records
+        .iter()
+        .map(|record| record["user"].as_str().expect("user present").to_owned())
+        .collect();
+
+    let dir = tempfile::tempdir()?;
+    let packed = dir.path().join("spec.jac");
+    let unpacked = dir.path().join("spec.ndjson");
+
+    assert_cmd::Command::cargo_bin("jac")?
+        .args([
+            "pack",
+            fixture.to_str().unwrap(),
+            "-o",
+            packed.to_str().unwrap(),
+            "--ndjson",
+        ])
+        .assert()
+        .success();
+
+    let cat_output = assert_cmd::Command::cargo_bin("jac")?
+        .args(["cat", packed.to_str().unwrap(), "--field", "user"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let cat_users: Vec<String> = String::from_utf8(cat_output)?
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .map(|value| value.as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(cat_users, expected_users, "projection matches SPEC §12.1");
+
+    assert_cmd::Command::cargo_bin("jac")?
+        .args([
+            "unpack",
+            packed.to_str().unwrap(),
+            "-o",
+            unpacked.to_str().unwrap(),
+            "--ndjson",
+        ])
+        .assert()
+        .success();
+    let decompressed = load_fixture_values(&unpacked)?;
+    assert_eq!(decompressed, expected_records, "round-trip NDJSON matches");
+
+    let ls_output = assert_cmd::Command::cargo_bin("jac")?
+        .args([
+            "ls",
+            packed.to_str().unwrap(),
+            "--format",
+            "json",
+            "--stats",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let ls_json: Value = serde_json::from_slice(&ls_output)?;
+    let fields_array = ls_json["blocks"][0]["fields"]
+        .as_array()
+        .expect("fields array present");
+    let mut field_meta: HashMap<&str, &Value> = HashMap::new();
+    for field in fields_array {
+        let name = field["name"].as_str().unwrap();
+        field_meta.insert(name, field);
+    }
+
+    let ts_flags = field_meta["ts"]["encoding_flags"].as_u64().unwrap();
+    assert_ne!(ts_flags & ENCODING_FLAG_DELTA, 0, "ts has delta flag");
+
+    let level_flags = field_meta["level"]["encoding_flags"].as_u64().unwrap();
+    assert_ne!(
+        level_flags & ENCODING_FLAG_DICTIONARY,
+        0,
+        "level uses dictionary"
+    );
+
+    let error_field = field_meta["error"];
+    let error_flags = error_field["encoding_flags"].as_u64().unwrap();
+    assert_ne!(
+        error_flags & ENCODING_FLAG_DICTIONARY,
+        0,
+        "error dictionary due to single value"
+    );
+    assert_eq!(
+        error_field["present_count"].as_u64().unwrap(),
+        1,
+        "error present once"
+    );
+
     Ok(())
 }

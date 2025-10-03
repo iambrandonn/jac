@@ -2,8 +2,7 @@
 
 use jac_codec::{block_builder::BlockData, BlockBuilder, Codec, CompressOpts, DecompressOpts};
 use jac_format::{
-    checksum::compute_crc32c, constants::FLAG_NESTED_OPAQUE, BlockHeader, FileHeader, JacError,
-    Limits,
+    constants::FLAG_NESTED_OPAQUE, BlockHeader, FieldDirectoryEntry, FileHeader, JacError, Limits,
 };
 use jac_io::JacReader;
 use serde_json::{json, Map, Value};
@@ -40,14 +39,22 @@ fn build_block(records: &[Value]) -> (FileHeader, BlockHeader, Vec<Vec<u8>>) {
     (file_header, header, segments)
 }
 
-fn encode_file(header: &FileHeader, block_header: &BlockHeader, segments: &[Vec<u8>]) -> Vec<u8> {
+fn encode_file(
+    header: &FileHeader,
+    block_header: &BlockHeader,
+    segments: &[Vec<u8>],
+    tamper_checksum: bool,
+) -> Vec<u8> {
     let mut bytes = header.encode().expect("encode file header");
 
     let mut block_bytes = block_header.encode().expect("encode block header");
     for segment in segments {
         block_bytes.extend_from_slice(segment);
     }
-    let crc = compute_crc32c(&block_bytes);
+    let mut crc = jac_format::checksum::compute_crc32c(&block_bytes);
+    if tamper_checksum {
+        crc ^= 0xFFFF_FFFF;
+    }
     block_bytes.extend_from_slice(&crc.to_le_bytes());
     bytes.extend_from_slice(&block_bytes);
 
@@ -63,16 +70,14 @@ fn default_decode_opts() -> DecompressOpts {
 
 #[test]
 fn reader_reports_unsupported_compression() {
-    let (file_header, mut block_header, segments) = build_block(&[
-        json!({"id": 1, "msg": "hello"}),
-        json!({"id": 2, "msg": "world"}),
-    ]);
+    let (file_header, mut block_header, segments) =
+        build_block(&[json!({"id": 1}), json!({"id": 2})]);
 
     for entry in block_header.fields.iter_mut() {
-        entry.compressor = 99; // invalid compressor id
+        entry.compressor = 99;
     }
 
-    let bytes = encode_file(&file_header, &block_header, &segments);
+    let bytes = encode_file(&file_header, &block_header, &segments, false);
     let mut reader = JacReader::new(Cursor::new(bytes), default_decode_opts()).expect("reader");
     let mut stream = reader.record_stream().expect("record stream");
 
@@ -93,15 +98,18 @@ fn reader_reports_reserved_type_tag() {
         .position(|entry| entry.field_name == "flag")
         .expect("flag field present");
 
-    let presence_bytes = block_header.fields[field_index].presence_bytes;
-    let tag_bytes = block_header.fields[field_index].tag_bytes;
-    assert!(tag_bytes >= 1, "expected tag bytes for flag field");
+    let FieldDirectoryEntry {
+        presence_bytes,
+        tag_bytes,
+        ..
+    } = block_header.fields[field_index].clone();
+    assert!(tag_bytes >= 1);
 
-    // Overwrite the first 3-bit tag with value 7 (reserved)
+    // Overwrite tag stream with reserved tag = 7
     let tag_offset = presence_bytes;
     segments[field_index][tag_offset] = 0b0000_0111;
 
-    let bytes = encode_file(&file_header, &block_header, &segments);
+    let bytes = encode_file(&file_header, &block_header, &segments, false);
     let mut reader = JacReader::new(Cursor::new(bytes), default_decode_opts()).expect("reader");
     let mut stream = reader.record_stream().expect("record stream");
 
@@ -115,9 +123,9 @@ fn reader_reports_reserved_type_tag() {
 
 #[test]
 fn reader_reports_unexpected_eof_for_truncated_block() {
-    let (file_header, block_header, segments) = build_block(&[json!({"id": 1, "msg": "hello"})]);
+    let (file_header, block_header, segments) = build_block(&[json!({"id": 1})]);
 
-    let mut bytes = encode_file(&file_header, &block_header, &segments);
+    let mut bytes = encode_file(&file_header, &block_header, &segments, false);
     assert!(bytes.len() > 8);
     bytes.truncate(bytes.len() - 3);
 
@@ -134,7 +142,7 @@ fn reader_reports_unexpected_eof_for_truncated_block() {
 fn reader_enforces_string_length_limit() {
     let (file_header, block_header, segments) = build_block(&[json!({"msg": "exceeds"})]);
 
-    let bytes = encode_file(&file_header, &block_header, &segments);
+    let bytes = encode_file(&file_header, &block_header, &segments, false);
     let mut limits = Limits::default();
     limits.max_string_len_per_value = 4;
     let opts = DecompressOpts {
@@ -150,5 +158,19 @@ fn reader_enforces_string_length_limit() {
             assert!(message.to_lowercase().contains("string"));
         }
         other => panic!("expected LimitExceeded, got {:?}", other),
+    }
+}
+
+#[test]
+fn reader_reports_checksum_mismatch() {
+    let (file_header, block_header, segments) = build_block(&[json!({"id": 42})]);
+
+    let bytes = encode_file(&file_header, &block_header, &segments, true);
+    let mut reader = JacReader::new(Cursor::new(bytes), default_decode_opts()).expect("reader");
+    let mut stream = reader.record_stream().expect("record stream");
+
+    match stream.next() {
+        Some(Err(JacError::ChecksumMismatch)) => {}
+        other => panic!("expected ChecksumMismatch, got {:?}", other),
     }
 }
