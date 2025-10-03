@@ -1,0 +1,4 @@
+{"ts":1623000000,"level":"INFO","msg":"Started","user":"alice"}
+{"ts":1623000005,"level":"INFO","msg":"Step1","user":"alice"}
+{"ts":1623000010,"level":"WARN","msg":"Low disk","user":"bob"}
+{"ts":1623000020,"user":"carol","error":"Disk failure"}

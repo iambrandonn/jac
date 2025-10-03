@@ -315,7 +315,8 @@ impl ColumnBuilder {
             return Ok((None, false));
         }
 
-        let threshold = min(dict_limit, max(2, self.strings.len() / 8));
+        // Per SPEC §4 dictionary encoding uses threshold max(2, total_strings / 4)
+        let threshold = min(dict_limit, max(2, self.strings.len() / 4));
 
         if distinct_count <= threshold {
             Ok((Some((dict_entries, dict_map)), true))
