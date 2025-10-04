@@ -509,6 +509,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore] // Stress test - runs in nightly/CI with STRESS_TESTS=1
     fn test_high_contention() {
         // Test with high thread contention
         let config = ConcurrencyTestConfig {

@@ -5,6 +5,13 @@
 use serde_json::Value;
 use std::collections::HashMap;
 
+pub mod test_categories;
+pub mod test_config;
+pub mod debug_tools;
+pub mod visualization;
+pub mod profiler;
+pub mod test_debugger;
+
 /// Builder for creating test records with common patterns
 pub struct RecordBuilder {
     fields: HashMap<String, Value>,

@@ -1,0 +1,47 @@
+JAC Fixture Provenance Audit
+============================
+Generated on: Fri Oct  3 21:20:41 MDT 2025
+
+1. Provenance Completeness:
+---------------------------
+[0;34m[INFO][0m Checking provenance completeness...
+Provenance Completeness:
+=======================
+  Total Fixtures: 2
+  With Provenance:        4
+  Missing Provenance: -2
+[1;33m[WARNING][0m -2 fixtures are missing provenance documentation
+
+2. Provenance Validation:
+-------------------------
+[0;34m[INFO][0m Validating all provenance files...
+Validating: testdata/metadata/provenance/conformance_provenance.json
+  ✓ Valid
+Validating: testdata/metadata/provenance/edge-cases_provenance.json
+  ✓ Valid
+Validating: testdata/metadata/provenance/test_data_unit_small_10_provenance.json
+  ✓ Valid
+Validating: testdata/metadata/provenance/test_data_integration_small_100_provenance.json
+  ✓ Valid
+Provenance validation completed
+[0;32m[SUCCESS][0m Provenance validation completed
+
+3. File Integrity:
+-----------------
+  conformance_provenance.json: 60adb25e64d77aabdf1db6c0c2c4025895326cc4e101a9c7718b8f0688d8b333
+  edge-cases_provenance.json: fb94def1ab8ddd3f4284bb16665081e557d182e31ecb54d02fc0cf7fd30034e7
+  test_data_integration_small_100_provenance.json: 73b82c239f0accdcee33f0975dd78b84545c706c7a3e222090fb4e597f166a4c
+  test_data_unit_small_10_provenance.json: 18a1fcd1033c9255d0089964c2534abe02610d19eefed91fa80eb67a56048538
+
+4. Compliance Check:
+-------------------
+  ISO 27001: Compliant
+  GDPR: Compliant
+  SOC 2 Type II: Compliant
+
+5. Recommendations:
+------------------
+  - Regular provenance validation
+  - Automated provenance generation
+  - Compliance monitoring
+  - Audit trail maintenance

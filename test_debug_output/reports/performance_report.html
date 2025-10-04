@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JAC Test Performance Report</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; }
+        .header { background: #f0f0f0; padding: 20px; border-radius: 5px; }
+        .section { margin: 20px 0; }
+        .metric { display: inline-block; margin: 10px; padding: 10px; background: #e8f4f8; border-radius: 3px; }
+        .success { color: green; }
+        .warning { color: orange; }
+        .error { color: red; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>JAC Test Performance Report</h1>
+        <p>Generated on: Fri Oct  3 21:23:10 MDT 2025</p>
+    </div>
+    
+    <div class="section">
+        <h2>Test Summary</h2>
+        <div class="metric">
+            <strong>Total Tests:</strong> <span id="total-tests">Loading...</span>
+        </div>
+        <div class="metric">
+            <strong>Passed:</strong> <span class="success" id="passed-tests">Loading...</span>
+        </div>
+        <div class="metric">
+            <strong>Failed:</strong> <span class="error" id="failed-tests">Loading...</span>
+        </div>
+    </div>
+    
+    <div class="section">
+        <h2>Performance Metrics</h2>
+        <div class="metric">
+            <strong>Execution Time:</strong> <span id="execution-time">Loading...</span>
+        </div>
+        <div class="metric">
+            <strong>Memory Usage:</strong> <span id="memory-usage">Loading...</span>
+        </div>
+    </div>
+    
+    <div class="section">
+        <h2>Test Output</h2>
+        <pre id="test-output">Loading...</pre>
+    </div>
+    
+    <script>
+        // Simple JavaScript to load and display test results
+        fetch('../test_results.json')
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById('total-tests').textContent = 'N/A';
+                document.getElementById('passed-tests').textContent = data.status === 'passed' ? 'All' : 'Some';
+                document.getElementById('failed-tests').textContent = data.status === 'failed' ? 'Some' : 'None';
+            });
+    </script>
+</body>
+</html>

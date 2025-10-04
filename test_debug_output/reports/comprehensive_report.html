@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JAC Comprehensive Test Report</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; background: #f5f5f5; }
+        .container { max-width: 1200px; margin: 0 auto; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; border-radius: 10px; margin-bottom: 30px; text-align: center; }
+        .section { margin: 30px 0; padding: 20px; background: #f8f9fa; border-radius: 8px; }
+        .metric { display: inline-block; margin: 10px; padding: 15px; background: white; border-radius: 5px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .success { color: #28a745; }
+        .warning { color: #ffc107; }
+        .error { color: #dc3545; }
+        .chart-container { margin: 20px 0; height: 400px; }
+        .tabs { display: flex; margin-bottom: 20px; }
+        .tab { padding: 10px 20px; background: #e9ecef; border: none; cursor: pointer; margin-right: 5px; border-radius: 5px 5px 0 0; }
+        .tab.active { background: #007bff; color: white; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>JAC Comprehensive Test Report</h1>
+            <p>Generated on: Fri Oct  3 21:23:10 MDT 2025</p>
+            <p>Debugging and Performance Analysis</p>
+        </div>
+        
+        <div class="tabs">
+            <button class="tab active" onclick="showTab('summary')">Summary</button>
+            <button class="tab" onclick="showTab('performance')">Performance</button>
+            <button class="tab" onclick="showTab('debugging')">Debugging</button>
+            <button class="tab" onclick="showTab('categorization')">Categorization</button>
+        </div>
+        
+        <div id="summary" class="tab-content active">
+            <div class="section">
+                <h2>Test Execution Summary</h2>
+                <div class="metric">
+                    <strong>Total Tests:</strong> <span id="total-tests">Loading...</span>
+                </div>
+                <div class="metric">
+                    <strong>Passed:</strong> <span class="success" id="passed-tests">Loading...</span>
+                </div>
+                <div class="metric">
+                    <strong>Failed:</strong> <span class="error" id="failed-tests">Loading...</span>
+                </div>
+                <div class="metric">
+                    <strong>Execution Time:</strong> <span id="execution-time">Loading...</span>
+                </div>
+            </div>
+        </div>
+        
+        <div id="performance" class="tab-content">
+            <div class="section">
+                <h2>Performance Metrics</h2>
+                <div class="chart-container">
+                    <canvas id="performanceChart"></canvas>
+                </div>
+            </div>
+        </div>
+        
+        <div id="debugging" class="tab-content">
+            <div class="section">
+                <h2>Debugging Tools</h2>
+                <p>Available debugging tools:</p>
+                <ul>
+                    <li>Test performance monitoring</li>
+                    <li>Failure analysis and suggestions</li>
+                    <li>Memory usage tracking</li>
+                    <li>Test execution timeline</li>
+                    <li>Error categorization</li>
+                </ul>
+            </div>
+        </div>
+        
+        <div id="categorization" class="tab-content">
+            <div class="section">
+                <h2>Test Categorization</h2>
+                <p>Tests are categorized as:</p>
+                <ul>
+                    <li><strong>Unit Tests:</strong> Fast, isolated tests</li>
+                    <li><strong>Integration Tests:</strong> Component interaction tests</li>
+                    <li><strong>Slow Tests:</strong> Long-running tests (marked with #[ignore])</li>
+                    <li><strong>Stress Tests:</strong> High-load tests (marked with #[ignore])</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        function showTab(tabName) {
+            // Hide all tab contents
+            var contents = document.getElementsByClassName('tab-content');
+            for (var i = 0; i < contents.length; i++) {
+                contents[i].classList.remove('active');
+            }
+            
+            // Remove active class from all tabs
+            var tabs = document.getElementsByClassName('tab');
+            for (var i = 0; i < tabs.length; i++) {
+                tabs[i].classList.remove('active');
+            }
+            
+            // Show selected tab content
+            document.getElementById(tabName).classList.add('active');
+            
+            // Add active class to clicked tab
+            event.target.classList.add('active');
+        }
+        
+        // Load test results
+        fetch('../test_results.json')
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById('total-tests').textContent = 'N/A';
+                document.getElementById('passed-tests').textContent = data.status === 'passed' ? 'All' : 'Some';
+                document.getElementById('failed-tests').textContent = data.status === 'failed' ? 'Some' : 'None';
+                document.getElementById('execution-time').textContent = 'N/A';
+            });
+        
+        // Create performance chart
+        const ctx = document.getElementById('performanceChart').getContext('2d');
+        new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: ['Unit Tests', 'Integration Tests', 'Slow Tests', 'Stress Tests'],
+                datasets: [{
+                    label: 'Test Count',
+                    data: [85, 34, 2, 1],
+                    backgroundColor: ['#28a745', '#007bff', '#ffc107', '#dc3545']
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    y: {
+                        beginAtZero: true
+                    }
+                }
+            }
+        });
+    </script>
+</body>
+</html>

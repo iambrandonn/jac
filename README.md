@@ -113,27 +113,129 @@ JAC enforces strict limits to prevent decompression bombs:
 
 ## Testing
 
-| Command | Purpose |
-|---------|---------|
-| `cargo test -p jac-format` | Core format/unit coverage (varints, bitpacking, decimals) |
-| `cargo test -p jac-codec` | Codec round-trips plus SPEC §12.1 conformance checks |
-| `cargo test -p jac-io` | Streaming encoder/decoder integration + negative/error harness |
-| `cargo test -p jac-cli` | CLI smoke, pack/unpack round-trips, and SPEC fixture regression |
-| `cargo run -p xtask` | Compliance matrix sanity check (fails if a spec requirement lacks tests) |
+JAC includes a comprehensive Phase 9 validation suite with multiple testing categories and automated CI integration.
 
-Fuzz targets live under `jac-codec/fuzz/`. Once `cargo-fuzz` is installed, run for example `cargo fuzz run fuzz_decode_block` to stress the block decoder.
+### Test Categories
+
+| Category | Command | Purpose | Duration |
+|----------|---------|---------|----------|
+| **Unit Tests** | `cargo test -p jac-format` | Core format/unit coverage (varints, bitpacking, decimals) | ~5s |
+| **Integration Tests** | `cargo test -p jac-codec` | Codec round-trips plus SPEC §12.1 conformance checks | ~10s |
+| **IO Tests** | `cargo test -p jac-io` | Streaming encoder/decoder integration + negative/error harness | ~15s |
+| **CLI Tests** | `cargo test -p jac-cli` | CLI smoke, pack/unpack round-trips, and SPEC fixture regression | ~5s |
+| **Cross-Platform** | `cargo test --test cross_platform_compatibility` | Endianness, version compatibility, and platform validation | ~10s |
+| **Security** | `cargo test --test security_property_tests` | Security-focused property tests and vulnerability prevention | ~30s |
+| **Slow Tests** | `cargo test --ignored` | Million-record tests and stress scenarios (nightly/CI only) | ~5m |
+| **Performance** | `cargo bench --workspace` | Benchmarking and performance regression detection | ~2m |
+
+### Test Runner
+
+Use the categorized test runner for efficient development:
+
+```bash
+# Run specific test categories
+./scripts/run_tests.sh --unit --integration
+./scripts/run_tests.sh --slow --stress  # For nightly/CI
+./scripts/run_tests.sh --performance    # For performance testing
+
+# Run all tests (CI mode)
+./scripts/run_tests.sh --all
+```
+
+### Fuzzing and Property Testing
+
+JAC includes comprehensive fuzzing and property testing for security and robustness:
+
+```bash
+# Install fuzzing tools
+cargo install cargo-fuzz
+
+# Run security fuzzing
+./scripts/security_fuzz.sh
+
+# Run specific fuzz targets
+cargo fuzz run fuzz_decode_block
+cargo fuzz run fuzz_varint
+cargo fuzz run fuzz_compression
+cargo fuzz run fuzz_projection
+cargo fuzz run fuzz_security
+```
+
+### Debugging and Performance Tools
+
+JAC includes advanced debugging and performance visualization tools:
+
+```bash
+# Run comprehensive test debugging
+./scripts/test_debug_tool.sh
+
+# Generate performance reports
+./scripts/manage_ci.sh report
+
+# Validate test data and provenance
+./scripts/manage_fixture_provenance.sh validate
+```
+
+### CI Integration
+
+JAC uses GitHub Actions with comprehensive CI workflows:
+
+- **Basic Tests**: Unit, integration, and cross-platform tests on all platforms
+- **Nightly Tests**: Comprehensive test suite with slow/stress tests
+- **Security Tests**: Security scanning, fuzzing, and compliance checks
+- **Performance Tests**: Benchmarking and performance monitoring
+- **Fuzzing Tests**: Automated fuzzing and property testing
+- **Quality Checks**: Clippy, rustfmt, and documentation validation
+
+### Test Data Management
+
+JAC includes sophisticated test data generation and management:
+
+```bash
+# Generate test data
+./scripts/manage_test_data.sh generate --category all --size medium
+
+# Validate test data
+./scripts/manage_test_data.sh validate
+
+# Manage fixture provenance
+./scripts/manage_fixture_provenance.sh generate
+./scripts/manage_fixture_provenance.sh validate
+```
+
+### Compliance and Security
+
+JAC maintains comprehensive compliance and security documentation:
+
+- **Security Reports**: `./scripts/generate_security_report.sh`
+- **Threat Modeling**: `docs/security/threat_modeling.md`
+- **Regression Scenarios**: `docs/security/regression_scenarios.md`
+- **Compliance Matrix**: `cargo run -p xtask`
 
 **Suggested pre-submit checklist:**
 - `cargo test --all`
 - `cargo run -p xtask`
+- `./scripts/run_tests.sh --unit --integration`
+- `./scripts/security_fuzz.sh`
 
 ## Development Status
 
-**Current Phase:** Phase 9 (Testing & Validation) – expanding conformance, compliance tracking, and fuzz coverage
+**Current Phase:** Phase 9 (Testing & Validation) – ✅ **COMPLETED**
 
 - ✅ Phases 0–8 delivered format/codec/IO/CLI foundations and baseline telemetry
-- ✅ Phase 9 progress: SPEC §12.1 fixture tests across codec/CLI/IO, negative reader harness, compliance matrix scaffold (`cargo run -p xtask`)
-- 🔜 Next: broaden compliance entries, add multi-platform/nightly coverage, wire fuzz/property suites into CI (see [PLAN9.md](PLAN9.md))
+- ✅ Phase 9 completed: Comprehensive testing and validation suite including:
+  - Cross-platform/endianness/version compatibility tests
+  - Test categorization and management system
+  - Debugging and performance visualization tools
+  - Security-focused fuzzing and property tests
+  - Threat modeling and regression scenarios
+  - Security compliance documentation and reporting
+  - Large test data strategy and generation scripts
+  - Fixture provenance documentation and tracking
+  - Enhanced CI workflows with test/perf monitoring and caching
+  - Updated documentation describing the validation suite
+
+**Next Phase:** Phase 10 (Production Readiness) – Performance optimization, production hardening, and ecosystem integration
 
 See [PLAN.md](PLAN.md) for the complete roadmap and phase breakdown.
 

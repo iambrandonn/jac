@@ -38,26 +38,26 @@ ERR-MATRIX-IO-OUTPUT,§8,Output I/O error propagated as `Io`,jac-io/src/lib.rs,j
 ERR-MATRIX-JSON-ERROR,§8,JSON parsing error propagated as `Json`,jac-io/src/lib.rs,jac-io/tests/error_matrix.rs::test_json_error
 ERR-MATRIX-INTERNAL-ERROR,§8,Internal error rejected with `Internal`,jac-io/src/lib.rs,jac-io/tests/error_matrix.rs::test_internal_error
 SPEC-3.4-BLOCK-CRC,§3.4,"Block CRC32C MUST be verified",jac-io/src/reader.rs,jac-io/tests/error_cases.rs::reader_reports_checksum_mismatch
-SPEC-4.5-DECIMAL-EXACT,§4.5,"Numbers MUST round-trip as exact numeric values",jac-codec/tests/conformance.rs::high_precision_decimals
-SPEC-4.5-STRING-EXACT,§4.5,"Strings MUST round-trip byte-exact (UTF-8)",jac-codec/tests/conformance.rs::unicode_edge_cases
-SPEC-4.5-ABSENT-NULL,§4.5,"Absent vs Null MUST be preserved",jac-io/tests/integration_tests.rs::projection_handles_absent_and_null
+SPEC-4.5-DECIMAL-EXACT,§4.5,"Numbers MUST round-trip as exact numeric values",jac-format/src/decimal.rs,jac-codec/tests/conformance.rs::high_precision_decimals
+SPEC-4.5-STRING-EXACT,§4.5,"Strings MUST round-trip byte-exact (UTF-8)",jac-codec/src/segment.rs,jac-codec/tests/conformance.rs::unicode_edge_cases
+SPEC-4.5-ABSENT-NULL,§4.5,"Absent vs Null MUST be preserved",jac-io/src/reader.rs,jac-io/tests/integration_tests.rs::projection_handles_absent_and_null
 SPEC-4.6-COMPRESSOR-SUPPORT,§4.6,"Decoders MUST support at least id=0 (none) and id=1 (zstd)",jac-codec/src/segment.rs,jac-io/tests/error_cases.rs::reader_reports_unsupported_compression
 SPEC-4.7-SEGMENT-ORDER,§4.7,"Segment payload MUST appear in specified order",jac-codec/src/column.rs,jac-codec/tests/conformance.rs::multi_level_validation
 SPEC-8-INTEGRITY,§8,"Block CRC32C MUST be verified",jac-io/src/reader.rs,jac-io/tests/error_cases.rs::reader_reports_checksum_mismatch
 SPEC-8-BOUNDS,§8,"Decoders MUST enforce sane limits",jac-format/src/limits.rs,jac-io/tests/error_cases.rs::reader_enforces_string_length_limit
-SPEC-8-TYPE-SAFETY,§8,"Values exceeding 64-bit integer MUST be encoded as decimal",jac-codec/tests/conformance.rs::high_precision_decimals
-SPEC-8-DICTIONARY-BOUNDS,§8,"Dictionary index out of range MUST trigger error",jac-io/tests/error_cases.rs::reader_reports_dictionary_index_error
-SPEC-8-VERSIONING,§8,"Unknown magic or major version MUST trigger UnsupportedVersion",jac-io/tests/error_cases.rs::reader_rejects_unsupported_version
-SPEC-12.1-CONFORMANCE,§12.1,"Conformance test MUST verify full round-trip equality",jac-codec/tests/conformance.rs::spec12_round_trip_matches_fixture
-SPEC-12.1-PROJECTION,§12.1,"Conformance test MUST verify projection user yields expected sequence",jac-codec/tests/conformance.rs::spec12_projection_yields_expected_sequence
+SPEC-8-TYPE-SAFETY,§8,"Values exceeding 64-bit integer MUST be encoded as decimal",jac-codec/src/column.rs,jac-codec/tests/conformance.rs::high_precision_decimals
+SPEC-8-DICTIONARY-BOUNDS,§8,"Dictionary index out of range MUST trigger error",jac-io/src/reader.rs,jac-io/tests/error_cases.rs::reader_reports_dictionary_index_error
+SPEC-8-VERSIONING,§8,"Unknown magic or major version MUST trigger UnsupportedVersion",jac-io/src/reader.rs,jac-io/tests/error_cases.rs::reader_rejects_unsupported_version
+SPEC-12.1-CONFORMANCE,§12.1,"Conformance test MUST verify full round-trip equality",jac-codec/src/block_decode.rs,jac-codec/tests/conformance.rs::spec12_round_trip_matches_fixture
+SPEC-12.1-PROJECTION,§12.1,"Conformance test MUST verify projection user yields expected sequence",jac-codec/src/block_decode.rs,jac-codec/tests/conformance.rs::spec12_projection_yields_expected_sequence
 SPEC-VARINT-CAP,§4.3,"ULEB128 decode MUST cap at 10 bytes for u64",jac-format/src/varint.rs,jac-format/src/varint.rs::test_uleb128_decode_too_long
 SPEC-DECIMAL-SIGN,§4.5,"Zero MUST use sign 0",jac-format/src/decimal.rs,jac-format/src/decimal.rs::test_decimal_zero_leading_zeros
 SPEC-DECIMAL-LEADING-ZEROS,§4.5,"Decoders MUST reject leading zeros unless value is zero",jac-format/src/decimal.rs,jac-format/src/decimal.rs::test_decimal_remove_leading_zeros
 SPEC-TAG-PADDING,§4.3,"Unused high bits in final tag byte MUST be zero",jac-format/src/bitpack.rs,jac-format/src/bitpack.rs::test_tag_packer_padding
-SPEC-UNKNOWN-TAG,§8,"Unknown type tags MUST fail with UnsupportedFeature",jac-io/tests/error_cases.rs::reader_reports_reserved_type_tag
-SPEC-UNKNOWN-COMPRESSOR,§8,"Unknown compressor IDs MUST fail with UnsupportedCompression",jac-io/tests/error_cases.rs::reader_reports_unsupported_compression
+SPEC-UNKNOWN-TAG,§8,"Unknown type tags MUST fail with UnsupportedFeature",jac-io/src/reader.rs,jac-io/tests/error_cases.rs::reader_reports_reserved_type_tag
+SPEC-UNKNOWN-COMPRESSOR,§8,"Unknown compressor IDs MUST fail with UnsupportedCompression",jac-io/src/reader.rs,jac-io/tests/error_cases.rs::reader_reports_unsupported_compression
 SPEC-STREAMABILITY,§5,"Writers MUST only emit complete blocks",jac-io/src/writer.rs,jac-io/tests/integration_tests.rs::writer_flush_emits_partial_blocks
-SPEC-EOF-HANDLING,§5,"EOF before block complete MUST return UnexpectedEof",jac-io/tests/error_cases.rs::reader_reports_unexpected_eof_for_truncated_block
+SPEC-EOF-HANDLING,§5,"EOF before block complete MUST return UnexpectedEof",jac-io/src/reader.rs,jac-io/tests/error_cases.rs::reader_reports_unexpected_eof_for_truncated_block
 SPEC-DECIMAL-DIGITS-CAP,§4.5,"Decoders MUST enforce max_decimal_digits_per_value cap",jac-format/src/decimal.rs,jac-format/src/decimal.rs::test_decimal_limits
-SPEC-DICTIONARY-ENTRY-CAP,§4.4,"Dictionary entry count MUST NOT exceed max_dict_entries_per_field",jac-format/src/limits.rs,jac-codec/tests/column.rs::test_column_builder_dictionary_encoding
+SPEC-DICTIONARY-ENTRY-CAP,§4.4,"Dictionary entry count MUST NOT exceed max_dict_entries_per_field",jac-format/src/limits.rs,jac-codec/src/column.rs::test_column_builder_dictionary_encoding
 SPEC-STRING-LENGTH-CAP,§4.4,"Each dictionary entry length MUST NOT exceed max_string_len_per_value",jac-format/src/limits.rs,jac-io/tests/error_cases.rs::reader_enforces_string_length_limit

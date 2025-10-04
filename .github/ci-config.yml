@@ -1,0 +1,273 @@
+# JAC CI Configuration
+# This file controls which tests and features are enabled in CI
+
+# Test categories and their execution settings
+test_categories:
+  # Basic tests - always run
+  unit:
+    enabled: true
+    timeout: 10m
+    parallel: true
+
+  integration:
+    enabled: true
+    timeout: 15m
+    parallel: true
+
+  # Slow tests - run on schedule and main branch
+  slow:
+    enabled: true
+    timeout: 30m
+    parallel: false
+    triggers: [schedule, main_branch]
+
+  # Stress tests - run on schedule and main branch
+  stress:
+    enabled: true
+    timeout: 45m
+    parallel: false
+    triggers: [schedule, main_branch]
+
+  # Performance tests - run on main branch
+  performance:
+    enabled: true
+    timeout: 60m
+    parallel: false
+    triggers: [main_branch]
+
+  # Cross-platform tests - run on all platforms
+  cross_platform:
+    enabled: true
+    timeout: 20m
+    parallel: true
+    platforms: [ubuntu-latest, windows-latest, macos-latest]
+
+  # Security tests - always run
+  security:
+    enabled: true
+    timeout: 25m
+    parallel: true
+
+  # Fuzzing tests - run on schedule and main branch
+  fuzzing:
+    enabled: true
+    timeout: 120m
+    parallel: false
+    triggers: [schedule, main_branch]
+
+  # Property tests - run on schedule and main branch
+  property:
+    enabled: true
+    timeout: 30m
+    parallel: true
+    triggers: [schedule, main_branch]
+
+# Caching configuration
+caching:
+  # Enable cargo caching
+  cargo_registry: true
+  cargo_index: true
+  cargo_build: true
+
+  # Enable test data caching
+  test_data: true
+  fuzz_corpus: true
+
+  # Cache retention (days)
+  retention_days: 7
+
+# Performance monitoring
+performance_monitoring:
+  # Enable performance tracking
+  enabled: true
+
+  # Performance thresholds
+  thresholds:
+    unit_test_timeout: 5m
+    integration_test_timeout: 10m
+    slow_test_timeout: 20m
+    stress_test_timeout: 30m
+
+  # Performance reporting
+  reporting:
+    generate_reports: true
+    upload_artifacts: true
+    track_trends: true
+
+# Security configuration
+security:
+  # Enable security scanning
+  enabled: true
+
+  # Security tools
+  tools:
+    cargo_audit: true
+    cargo_deny: true
+    cargo_geiger: true
+    security_fuzzing: true
+    property_testing: true
+
+  # Security reporting
+  reporting:
+    generate_reports: true
+    upload_artifacts: true
+    notify_on_failure: true
+
+# Fuzzing configuration
+fuzzing:
+  # Enable fuzzing
+  enabled: true
+
+  # Fuzzing targets
+  targets:
+    - fuzz_varint
+    - fuzz_bitpack
+    - fuzz_compression
+    - fuzz_decode_block
+    - fuzz_projection
+    - fuzz_security
+
+  # Fuzzing settings
+  settings:
+    max_duration: 60m
+    max_corpus_size: 1000
+    max_input_size: 1024
+
+  # Fuzzing reporting
+  reporting:
+    generate_reports: true
+    upload_artifacts: true
+    track_coverage: true
+
+# Test data management
+test_data:
+  # Enable test data management
+  enabled: true
+
+  # Test data generation
+  generation:
+    auto_generate: true
+    categories: [unit, integration, performance, stress, conformance]
+    sizes: [small, medium, large]
+
+  # Test data validation
+  validation:
+    validate_format: true
+    validate_schema: true
+    validate_integrity: true
+
+  # Test data provenance
+  provenance:
+    generate_provenance: true
+    validate_provenance: true
+    track_lineage: true
+
+# Reporting configuration
+reporting:
+  # Enable reporting
+  enabled: true
+
+  # Report types
+  types:
+    test_results: true
+    performance_metrics: true
+    security_scan: true
+    coverage: true
+    compliance: true
+
+  # Report formats
+  formats:
+    html: true
+    json: true
+    markdown: true
+
+  # Report destinations
+  destinations:
+    artifacts: true
+    pr_comments: true
+    github_pages: true
+
+# Notification configuration
+notifications:
+  # Enable notifications
+  enabled: true
+
+  # Notification triggers
+  triggers:
+    test_failure: true
+    security_issue: true
+    performance_regression: true
+    fuzzing_crash: true
+
+  # Notification methods
+  methods:
+    pr_comments: true
+    issue_creation: true
+    slack_webhook: false
+    email: false
+
+# Environment-specific overrides
+environments:
+  # Development branch overrides
+  develop:
+    test_categories:
+      slow:
+        enabled: false
+      stress:
+        enabled: false
+      fuzzing:
+        enabled: false
+
+  # Feature branch overrides
+  feature:
+    test_categories:
+      slow:
+        enabled: false
+      stress:
+        enabled: false
+      fuzzing:
+        enabled: false
+      performance:
+        enabled: false
+
+  # Hotfix branch overrides
+  hotfix:
+    test_categories:
+      slow:
+        enabled: false
+      stress:
+        enabled: false
+      fuzzing:
+        enabled: false
+      performance:
+        enabled: false
+      cross_platform:
+        platforms: [ubuntu-latest]
+
+# Resource limits
+resource_limits:
+  # Maximum concurrent jobs
+  max_concurrent_jobs: 10
+
+  # Maximum job duration
+  max_job_duration: 2h
+
+  # Maximum artifact size
+  max_artifact_size: 1GB
+
+  # Maximum cache size
+  max_cache_size: 5GB
+
+# Debugging and troubleshooting
+debugging:
+  # Enable debug logging
+  debug_logging: false
+
+  # Enable verbose output
+  verbose_output: false
+
+  # Enable test debugging
+  test_debugging: false
+
+  # Enable performance profiling
+  performance_profiling: false

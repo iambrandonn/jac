@@ -1,0 +1,717 @@
+warning: /Users/iambrandonn/jac/Cargo.toml: unused manifest key: workspace.patch
+warning: unused doc comment
+  --> jac-codec/tests/security_property_tests.rs:18:1
+   |
+18 | / /// Property test for varint security
+19 | | /// Ensures varint operations don't cause memory exhaustion or overflow
+   | |_----------------------------------------------------------------------^
+   |   |
+   |   rustdoc does not generate documentation for macro invocations
+   |
+   = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+   = note: `#[warn(unused_doc_comments)]` on by default
+
+warning: unused doc comment
+  --> jac-codec/tests/security_property_tests.rs:55:1
+   |
+55 | / /// Property test for presence bitmap security
+56 | | /// Ensures presence bitmap operations don't cause buffer overflows
+   | |_------------------------------------------------------------------^
+   |   |
+   |   rustdoc does not generate documentation for macro invocations
+   |
+   = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: unused doc comment
+  --> jac-codec/tests/security_property_tests.rs:82:1
+   |
+82 | / /// Property test for type tag security
+83 | | /// Ensures type tag operations don't cause security issues
+   | |_----------------------------------------------------------^
+   |   |
+   |   rustdoc does not generate documentation for macro invocations
+   |
+   = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: unused doc comment
+   --> jac-codec/tests/security_property_tests.rs:103:1
+    |
+103 | / /// Property test for CRC security
+104 | | /// Ensures CRC operations don't cause security issues
+    | |_-----------------------------------------------------^
+    |   |
+    |   rustdoc does not generate documentation for macro invocations
+    |
+    = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: unused doc comment
+   --> jac-codec/tests/security_property_tests.rs:122:1
+    |
+122 | / /// Property test for limits security
+123 | | /// Ensures limits are properly enforced to prevent resource exhaustion
+    | |_----------------------------------------------------------------------^
+    |   |
+    |   rustdoc does not generate documentation for macro invocations
+    |
+    = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: unused doc comment
+   --> jac-codec/tests/security_property_tests.rs:148:1
+    |
+148 | / /// Property test for block decoder security
+149 | | /// Ensures block decoder doesn't cause security issues
+    | |_------------------------------------------------------^
+    |   |
+    |   rustdoc does not generate documentation for macro invocations
+    |
+    = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: unused doc comment
+   --> jac-codec/tests/security_property_tests.rs:167:1
+    |
+167 | / /// Property test for memory safety
+168 | | /// Ensures operations don't cause memory safety issues
+    | |_------------------------------------------------------^
+    |   |
+    |   rustdoc does not generate documentation for macro invocations
+    |
+    = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: unused doc comment
+   --> jac-codec/tests/security_property_tests.rs:188:1
+    |
+188 | / /// Property test for integer overflow prevention
+189 | | /// Ensures operations don't cause integer overflows
+    | |_---------------------------------------------------^
+    |   |
+    |   rustdoc does not generate documentation for macro invocations
+    |
+    = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: unused doc comment
+   --> jac-codec/tests/security_property_tests.rs:211:1
+    |
+211 | / /// Property test for buffer overflow prevention
+212 | | /// Ensures operations don't cause buffer overflows
+    | |_--------------------------------------------------^
+    |   |
+    |   rustdoc does not generate documentation for macro invocations
+    |
+    = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: unused doc comment
+   --> jac-codec/tests/security_property_tests.rs:233:1
+    |
+233 | / /// Property test for denial of service prevention
+234 | | /// Ensures operations don't cause excessive computation
+    | |_-------------------------------------------------------^
+    |   |
+    |   rustdoc does not generate documentation for macro invocations
+    |
+    = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: unused doc comment
+   --> jac-codec/tests/security_property_tests.rs:256:1
+    |
+256 | / /// Property test for input validation
+257 | | /// Ensures input validation prevents security issues
+    | |_----------------------------------------------------^
+    |   |
+    |   rustdoc does not generate documentation for macro invocations
+    |
+    = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: unused doc comment
+   --> jac-codec/tests/security_property_tests.rs:276:1
+    |
+276 | / /// Property test for resource exhaustion prevention
+277 | | /// Ensures operations don't exhaust system resources
+    | |_----------------------------------------------------^
+    |   |
+    |   rustdoc does not generate documentation for macro invocations
+    |
+    = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: unused doc comment
+   --> jac-codec/tests/security_property_tests.rs:297:1
+    |
+297 | / /// Property test for thread safety
+298 | | /// Ensures operations are thread-safe
+    | |_-------------------------------------^
+    |   |
+    |   rustdoc does not generate documentation for macro invocations
+    |
+    = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: unused doc comment
+   --> jac-codec/tests/security_property_tests.rs:320:1
+    |
+320 | / /// Property test for information disclosure prevention
+321 | | /// Ensures operations don't leak sensitive information
+    | |_------------------------------------------------------^
+    |   |
+    |   rustdoc does not generate documentation for macro invocations
+    |
+    = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: unused doc comment
+   --> jac-codec/tests/security_property_tests.rs:344:1
+    |
+344 | / /// Property test for authentication bypass prevention
+345 | | /// Ensures operations don't bypass security checks
+    | |_--------------------------------------------------^
+    |   |
+    |   rustdoc does not generate documentation for macro invocations
+    |
+    = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: unused doc comment
+   --> jac-codec/tests/security_property_tests.rs:364:1
+    |
+364 | / /// Property test for format string vulnerability prevention
+365 | | /// Ensures operations don't have format string vulnerabilities
+    | |_--------------------------------------------------------------^
+    |   |
+    |   rustdoc does not generate documentation for macro invocations
+    |
+    = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: unused doc comment
+   --> jac-codec/tests/security_property_tests.rs:380:1
+    |
+380 | / /// Property test for injection vulnerability prevention
+381 | | /// Ensures operations don't have injection vulnerabilities
+    | |_----------------------------------------------------------^
+    |   |
+    |   rustdoc does not generate documentation for macro invocations
+    |
+    = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: unused doc comment
+   --> jac-codec/tests/security_property_tests.rs:400:1
+    |
+400 | / /// Property test for race condition prevention
+401 | | /// Ensures operations don't have race conditions
+    | |_------------------------------------------------^
+    |   |
+    |   rustdoc does not generate documentation for macro invocations
+    |
+    = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: unused doc comment
+   --> jac-codec/tests/security_property_tests.rs:422:1
+    |
+422 | / /// Property test for side channel attack prevention
+423 | | /// Ensures operations don't leak information through side channels
+    | |_------------------------------------------------------------------^
+    |   |
+    |   rustdoc does not generate documentation for macro invocations
+    |
+    = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: unused doc comment
+   --> jac-codec/tests/security_property_tests.rs:442:1
+    |
+442 | / /// Property test for heap overflow prevention
+443 | | /// Ensures operations don't cause heap overflows
+    | |_------------------------------------------------^
+    |   |
+    |   rustdoc does not generate documentation for macro invocations
+    |
+    = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: unused doc comment
+   --> jac-codec/tests/security_property_tests.rs:462:1
+    |
+462 | / /// Property test for stack overflow prevention
+463 | | /// Ensures operations don't cause stack overflows
+    | |_-------------------------------------------------^
+    |   |
+    |   rustdoc does not generate documentation for macro invocations
+    |
+    = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: unused doc comment
+   --> jac-codec/tests/security_property_tests.rs:482:1
+    |
+482 | / /// Property test for use-after-free prevention
+483 | | /// Ensures operations don't cause use-after-free issues
+    | |_-------------------------------------------------------^
+    |   |
+    |   rustdoc does not generate documentation for macro invocations
+    |
+    = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: unused doc comment
+   --> jac-codec/tests/security_property_tests.rs:502:1
+    |
+502 | / /// Property test for double-free prevention
+503 | | /// Ensures operations don't cause double-free issues
+    | |_----------------------------------------------------^
+    |   |
+    |   rustdoc does not generate documentation for macro invocations
+    |
+    = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: unused doc comment
+   --> jac-codec/tests/security_property_tests.rs:522:1
+    |
+522 | / /// Property test for null pointer dereference prevention
+523 | | /// Ensures operations don't cause null pointer dereferences
+    | |_-----------------------------------------------------------^
+    |   |
+    |   rustdoc does not generate documentation for macro invocations
+    |
+    = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: unused doc comment
+   --> jac-codec/tests/security_property_tests.rs:542:1
+    |
+542 | / /// Property test for uninitialized memory access prevention
+543 | | /// Ensures operations don't access uninitialized memory
+    | |_-------------------------------------------------------^
+    |   |
+    |   rustdoc does not generate documentation for macro invocations
+    |
+    = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: unused doc comment
+   --> jac-codec/tests/security_property_tests.rs:562:1
+    |
+562 | / /// Property test for memory corruption prevention
+563 | | /// Ensures operations don't cause memory corruption
+    | |_---------------------------------------------------^
+    |   |
+    |   rustdoc does not generate documentation for macro invocations
+    |
+    = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: comparison is useless due to type limits
+   --> jac-codec/tests/security_property_tests.rs:118:22
+    |
+118 |         prop_assert!(crc <= 0xFFFFFFFF);
+    |                      ^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(unused_comparisons)]` on by default
+
+warning: `jac-codec` (test "security_property_tests") generated 27 warnings
+warning: field `test_duration` is never read
+  --> jac-io/tests/concurrency_stress.rs:74:5
+   |
+69 | struct ConcurrencyTestConfig {
+   |        --------------------- field in this struct
+...
+74 |     test_duration: Duration,
+   |     ^^^^^^^^^^^^^
+   |
+   = note: `ConcurrencyTestConfig` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+   = note: `#[warn(dead_code)]` on by default
+
+warning: fields `total_records_read`, `total_blocks_written`, `total_blocks_read`, and `read_throughput` are never read
+   --> jac-io/tests/concurrency_stress.rs:97:5
+    |
+95  | struct ConcurrencyTestResult {
+    |        --------------------- fields in this struct
+96  |     total_records_written: usize,
+97  |     total_records_read: usize,
+    |     ^^^^^^^^^^^^^^^^^^
+98  |     total_blocks_written: usize,
+    |     ^^^^^^^^^^^^^^^^^^^^
+99  |     total_blocks_read: usize,
+    |     ^^^^^^^^^^^^^^^^^
+100 |     write_throughput: f64, // records per second
+101 |     read_throughput: f64,  // records per second
+    |     ^^^^^^^^^^^^^^^
+    |
+    = note: `ConcurrencyTestResult` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: field `data_generator` is never read
+   --> jac-io/tests/concurrency_stress.rs:109:5
+    |
+107 | struct ConcurrencyStressTest {
+    |        --------------------- field in this struct
+108 |     config: ConcurrencyTestConfig,
+109 |     data_generator: TestDataGenerator,
+    |     ^^^^^^^^^^^^^^
+
+warning: `jac-io` (test "concurrency_stress") generated 3 warnings
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/main.rs (target/debug/deps/jac-a73141617ebe1e33)
+
+running 8 tests
+test tests::block_range_into_bounds_normalizes_end ... ok
+test tests::parse_block_range_open_ended ... ok
+test tests::parse_block_range_single_block ... ok
+test tests::csv_serialize_roundtrip_examples ... ok
+test tests::print_ls_table_fields_only_sorts ... ok
+test tests::print_ls_json_includes_blocks_and_fields ... ok
+Compressed to /var/folders/ht/kr10yng12gb_kv60r06td77w0000gn/T/cli_json_roundtrip_1759548186634832000_output.jac (records: 2, blocks: 1, bytes written: 70, elapsed: 445.63µs, 4488.1 rec/s, 0.15 MiB/s)
+Compressed to /var/folders/ht/kr10yng12gb_kv60r06td77w0000gn/T/cli_roundtrip_1759548186634803000_output.jac (records: 2, blocks: 1, bytes written: 71, elapsed: 448.17µs, 4462.6 rec/s, 0.15 MiB/s)
+Decompressed to /var/folders/ht/kr10yng12gb_kv60r06td77w0000gn/T/cli_json_roundtrip_1759548186634832000_output.json (records: 2, blocks processed: 1, elapsed: 244.25µs, 8188.3 rec/s, 0.07 MiB/s)
+Decompressed to /var/folders/ht/kr10yng12gb_kv60r06td77w0000gn/T/cli_roundtrip_1759548186634803000_output.ndjson (records: 2, blocks processed: 1, elapsed: 224.17µs, 8921.9 rec/s, 0.08 MiB/s)
+test tests::pack_json_array_roundtrip ... ok
+test tests::pack_and_unpack_roundtrip ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/cli.rs (target/debug/deps/cli-81f3251dfbca9ca5)
+
+running 9 tests
+test cat_unknown_field_fails ... ok
+test ls_table_lists_fields ... ok
+test cat_ndjson_outputs_values ... ok
+test ls_stats_reports_field_details ... ok
+test cat_csv_outputs_plain_values ... ok
+test ls_stats_respects_sample_limit_flag ... ok
+test ls_json_output_parses ... ok
+test pack_accepts_bom_prefixed_ndjson ... ok
+test spec_fixture_cli_conformance ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.38s
+
+     Running unittests src/lib.rs (target/debug/deps/jac_codec-da85ce49725ca611)
+
+running 34 tests
+test block_builder::tests::test_block_builder_empty ... ok
+test block_decode::tests::test_block_decoder_block_limit ... ok
+test column::tests::test_column_builder_basic ... ok
+test block_builder::tests::test_block_builder_unsupported_brotli_codec ... ok
+test block_builder::tests::test_block_builder_unsupported_deflate_codec ... ok
+test column::tests::test_column_builder_decimal_digit_limit_enforced ... ok
+test column::tests::test_column_builder_canonicalizes_decimals_when_enabled ... ok
+test column::tests::test_column_builder_delta_encoding ... ok
+test column::tests::test_column_builder_large_integers ... ok
+test column::tests::test_column_builder_dictionary_encoding ... ok
+test column::tests::test_column_builder_dictionary_threshold_falls_back_to_raw ... ok
+test column::tests::test_column_builder_mixed_types ... ok
+test column::tests::test_column_builder_objects_and_arrays ... ok
+test column::tests::test_column_builder_presence_limit_enforced ... ok
+test column::tests::test_column_builder_string_length_limit_enforced ... ok
+test column::tests::test_column_builder_tag_limit_enforced ... ok
+test segment::tests::test_compress_brotli_returns_unsupported ... ok
+test segment::tests::test_compress_deflate_returns_unsupported ... ok
+test segment_decode::tests::test_segment_decoder_dictionary_index_error ... ok
+test segment_decode::tests::test_segment_decoder_reserved_tag ... ok
+test segment_decode::tests::test_segment_decoder_value_count_mismatch ... ok
+test segment_decode::tests::test_segment_decoder_delta_integers ... ok
+test block_builder::tests::test_block_builder_schema_drift ... ok
+test block_decode::tests::test_block_decoder_conformance_vector ... ok
+test block_decode::tests::test_block_decoder_project_field ... ok
+test segment_decode::tests::test_segment_decoder_decompress_error ... ok
+test block_decode::tests::test_block_decoder_layout_validation ... ok
+test segment_decode::tests::test_segment_decoder_dictionary_strings ... ok
+test segment_decode::tests::test_segment_decoder_roundtrip ... ok
+test block_builder::tests::test_block_builder_missing_fields ... ok
+test block_builder::tests::test_block_builder_basic ... ok
+test block_builder::tests::test_block_builder_canonicalize_keys ... ok
+test block_decode::tests::test_block_decoder_roundtrip ... ok
+test block_decode::tests::test_block_decoder_crc_verification ... ok
+
+test result: ok. 34 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/conformance.rs (target/debug/deps/conformance-10cce3515479dca2)
+
+running 11 tests
+test empty_and_single_record_files ... ok
+test schema_drift_validation ... ok
+test high_precision_decimals ... ok
+test unicode_edge_cases ... ok
+test deeply_nested_structures ... ok
+test spec12_projection_yields_expected_sequence ... ok
+test spec12_round_trip_matches_fixture ... ok
+test multi_level_validation ... ok
+test spec12_field_encodings_match_requirements ... ok
+test boundary_values_and_edge_cases ... ok
+test large_synthetic_block ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests/cross_platform_compatibility.rs (target/debug/deps/cross_platform_compatibility-6f1e1ba2ed7dd5fd)
+
+running 8 tests
+test test_limits_compatibility ... ok
+test test_type_tag_compatibility ... ok
+test test_file_header_cross_platform ... ok
+test test_version_compatibility ... ok
+test test_block_header_cross_platform ... ok
+test test_endianness_compatibility ... ok
+test test_spec_conformance_cross_platform ... ok
+test test_compression_codec_compatibility ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running tests/security_property_tests.rs (target/debug/deps/security_property_tests-8b34c338b29de11f)
+
+running 26 tests
+test test_limits_security_properties ... ok
+test test_memory_corruption_prevention ... ok
+test test_dos_prevention ... ok
+test test_information_disclosure_prevention ... ok
+test test_injection_vulnerability_prevention ... ok
+test test_integer_overflow_prevention ... ok
+test test_double_free_prevention ... ok
+test test_auth_bypass_prevention ... ok
+test test_input_validation ... ok
+test test_format_string_vulnerability_prevention ... ok
+test test_type_tag_security_properties ... ok
+test test_buffer_overflow_prevention ... ok
+test test_heap_overflow_prevention ... ok
+test test_memory_safety_properties ... ok
+test test_resource_exhaustion_prevention ... ok
+test test_side_channel_attack_prevention ... ok
+test test_null_pointer_dereference_prevention ... ok
+test test_race_condition_prevention ... ok
+test test_stack_overflow_prevention ... ok
+test test_thread_safety ... ok
+test test_presence_bitmap_security_properties ... ok
+test test_uninitialized_memory_access_prevention ... ok
+test test_use_after_free_prevention ... ok
+test test_block_decoder_security_properties ... ok
+test test_crc_security_properties ... ok
+test test_varint_security_properties ... ok
+
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.69s
+
+     Running unittests src/lib.rs (target/debug/deps/jac_format-4c0f50742e4d67e8)
+
+running 85 tests
+test bitpack::tests::test_presence_bitmap_edge_cases ... ok
+test block::tests::test_block_header_empty_fields ... ok
+test bitpack::tests::test_presence_bitmap_basic ... ok
+test bitpack::tests::test_presence_bitmap_roundtrip ... ok
+test bitpack::tests::test_tag_packer_padding ... ok
+test block::tests::test_block_header_endianness ... ok
+test block::tests::test_block_header_header_len_mismatch_detected ... ok
+test bitpack::tests::test_tag_packer_basic ... ok
+test bitpack::tests::test_tag_packer_unpacker_roundtrip ... ok
+test block::tests::test_block_header_invalid_magic ... ok
+test block::tests::test_block_header_large_values ... ok
+test block::tests::test_block_header_limit_exceeded_dict_entries ... ok
+test bitpack::tests::test_tag_packer_invalid_tag - should panic ... ok
+test block::tests::test_block_header_limit_exceeded_records ... ok
+test block::tests::test_block_header_limit_exceeded_segment_length ... ok
+test block::tests::test_block_header_presence_bytes_limit_enforced ... ok
+test block::tests::test_block_header_roundtrip_basic ... ok
+test block::tests::test_block_header_roundtrip_multiple_fields ... ok
+test block::tests::test_block_header_tag_bytes_limit_enforced ... ok
+test block::tests::test_block_header_truncated ... ok
+test block::tests::test_block_header_unicode_field_name ... ok
+test block::tests::test_block_header_value_count_exceeds_record_count ... ok
+test checksum::tests::test_crc32c_basic ... ok
+test checksum::tests::test_crc32c_deterministic ... ok
+test checksum::tests::test_crc32c_different_data ... ok
+test checksum::tests::test_crc32c_empty ... ok
+test checksum::tests::test_crc32c_known_vector ... ok
+test checksum::tests::test_crc32c_verify_match ... ok
+test checksum::tests::test_crc32c_verify_mismatch ... ok
+test decimal::tests::test_decimal_decode_exponent_out_of_range ... ok
+test decimal::tests::test_decimal_decode_exponent_underflow ... ok
+test decimal::tests::test_decimal_decode_invalid_sign ... ok
+test decimal::tests::test_decimal_encode_decode ... ok
+test decimal::tests::test_decimal_from_str_basic ... ok
+test decimal::tests::test_decimal_f64_exactness ... ok
+test decimal::tests::test_decimal_from_str_invalid ... ok
+test decimal::tests::test_decimal_from_str_trims_leading_zero ... ok
+test decimal::tests::test_decimal_from_str_zero ... ok
+test decimal::tests::test_decimal_negative_zero_is_normalized ... ok
+test decimal::tests::test_decimal_remove_leading_zeros ... ok
+test decimal::tests::test_decimal_roundtrip ... ok
+test decimal::tests::test_decimal_roundtrip_extremes ... ok
+test decimal::tests::test_decimal_zero_leading_zeros ... ok
+test decimal::tests::test_decimal_to_json_string ... ok
+test footer::tests::test_index_footer_crc_mismatch ... ok
+test footer::tests::test_index_footer_crc_verification ... ok
+test footer::tests::test_index_footer_empty_blocks ... ok
+test footer::tests::test_index_footer_index_len_mismatch_detected ... ok
+test footer::tests::test_index_footer_endianness ... ok
+test footer::tests::test_index_footer_large_values ... ok
+test footer::tests::test_index_footer_invalid_magic ... ok
+test footer::tests::test_index_footer_roundtrip_basic ... ok
+test footer::tests::test_index_footer_roundtrip_multiple_blocks ... ok
+test footer::tests::test_index_footer_truncated ... ok
+test header::tests::test_file_header_edge_cases ... ok
+test header::tests::test_file_header_endianness ... ok
+test header::tests::test_file_header_flag_accessors ... ok
+test header::tests::test_file_header_invalid_magic ... ok
+test header::tests::test_file_header_roundtrip_basic ... ok
+test header::tests::test_file_header_roundtrip_with_metadata ... ok
+test header::tests::test_file_header_truncated ... ok
+test header::tests::test_file_header_unsupported_version ... ok
+test tests::test_codec_compressor_id ... ok
+test tests::test_codec_level ... ok
+test tests::test_codec_support ... ok
+test types::tests::test_type_tag_from_u8_invalid ... ok
+test types::tests::test_type_tag_from_u8_reserved ... ok
+test footer::tests::test_index_footer_many_blocks ... ok
+test types::tests::test_type_tag_from_u8_valid ... ok
+test decimal::tests::test_decimal_limits ... ok
+test types::tests::test_type_tag_values ... ok
+test decimal::tests::test_decimal_allows_max_digits ... ok
+test varint::tests::test_uleb128_decode_too_long ... ok
+test varint::tests::test_uleb128_decode_truncated ... ok
+test varint::tests::test_uleb128_roundtrip ... ok
+test varint::tests::test_zigzag_encoding_values ... ok
+test varint::tests::test_zigzag_roundtrip ... ok
+test header::tests::test_file_header_roundtrip_large_metadata ... ok
+test block::tests::test_block_header_limit_exceeded_field_name ... ok
+test block::tests::test_block_header_limit_exceeded_fields ... ok
+test varint::tests::prop_zigzag_roundtrip ... ok
+test varint::tests::prop_uleb128_roundtrip ... ok
+test bitpack::tests::prop_presence_roundtrip ... ok
+test bitpack::tests::prop_boolean_bitpacking_roundtrip ... ok
+test bitpack::tests::prop_tag_roundtrip ... ok
+
+test result: ok. 85 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+     Running tests/property_tests.rs (target/debug/deps/property_tests-d64a592a450c9844)
+
+running 8 tests
+test zigzag_roundtrip_property ... ok
+test uleb128_roundtrip_property ... ok
+test uleb128_encoding_size_property ... ok
+test zigzag_encoding_property ... ok
+test presence_bitmap_roundtrip_property ... ok
+test presence_bitmap_packing_efficiency_property ... ok
+test type_tags_packing_efficiency_property ... ok
+test type_tags_roundtrip_property ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.36s
+
+     Running unittests src/lib.rs (target/debug/deps/jac_io-ab20b4d18a12c6fa)
+
+running 5 tests
+test tests::ndjson_input_streams_records ... ok
+test tests::ndjson_input_handles_bom_and_mixed_newlines ... ok
+test tests::json_array_input_streams_records ... ok
+test tests::compress_and_decompress_roundtrip_ndjson ... ok
+test tests::project_to_json_array_and_csv ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/concurrency_stress.rs (target/debug/deps/concurrency_stress-6f4becdbacbd3fba)
+
+running 5 tests
+test tests::test_high_contention ... ignored
+test tests::test_parallel_writers_basic ... ok
+test tests::test_parallel_readers_basic ... ok
+test tests::test_projection_concurrency ... ok
+test tests::test_deterministic_output ... ok
+
+test result: ok. 4 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/error_cases.rs (target/debug/deps/error_cases-91544fd4ad21ce83)
+
+running 16 tests
+test compress_missing_file_reports_io_error ... ok
+test compress_json_array_type_mismatch ... ok
+test compress_invalid_ndjson_reports_json_error ... ok
+test reader_rejects_unsupported_version ... ok
+test reader_reports_corrupt_header ... ok
+test reader_enforces_string_length_limit ... ok
+test reader_rejects_invalid_magic ... ok
+test project_empty_fields_reports_internal_error ... ok
+test decompress_reports_io_error_on_output_failure ... ok
+test reader_reports_reserved_type_tag ... ok
+test reader_reports_checksum_mismatch ... ok
+test reader_rejects_corrupt_block_header ... ok
+test reader_reports_unexpected_eof_for_truncated_block ... ok
+test reader_reports_dictionary_index_error ... ok
+test reader_reports_unsupported_compression ... ok
+test reader_reports_decompress_error ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/error_matrix.rs (target/debug/deps/error_matrix-405d260d408043cf)
+
+running 16 tests
+test test_invalid_magic ... ok
+test test_io_input_error ... ok
+test test_corrupt_header ... ok
+test test_internal_error ... ok
+test test_type_mismatch ... ok
+test test_json_error ... ok
+test test_corrupt_block ... ok
+test test_checksum_mismatch ... ok
+test test_limit_exceeded ... ok
+test test_dictionary_error ... ok
+test test_unsupported_compression ... ok
+test test_unexpected_eof ... ok
+test test_decompress_error ... ok
+test test_io_output_error ... ok
+test test_unsupported_feature ... ok
+test test_unsupported_version ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/integration_tests.rs (target/debug/deps/integration_tests-bf7a013f24e24915)
+
+running 10 tests
+test million_record_roundtrip_and_projection ... ignored
+test writer_writes_index_footer_and_pointer ... ok
+test resync_skips_corrupt_block_when_not_strict ... ok
+test projection_handles_absent_and_null ... ok
+test decode_block_detects_crc_mismatch ... ok
+test reader_blocks_with_index_uses_footer ... ok
+test reader_blocks_without_index ... ok
+test writer_flush_emits_partial_blocks ... ok
+test project_outputs_json_array ... ok
+test project_outputs_ndjson_objects ... ok
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/jac_test_utils-cd3f1e3b478126b1)
+
+running 20 tests
+test debug_tools::tests::test_error_type_extraction ... ok
+test debug_tools::tests::test_failure_analyzer ... ok
+test test_categories::tests::test_category_attributes ... ok
+test test_categories::tests::test_metadata_creation ... ok
+test test_categories::tests::test_registry ... ok
+test test_config::tests::test_config_creation ... ok
+test test_config::tests::test_registry_creation ... ok
+test test_debugger::tests::test_failure_analyzer ... ok
+test test_config::tests::test_category_filtering ... ok
+test test_debugger::tests::test_debugger_basic ... ok
+test test_debugger::tests::test_failure_recording ... ok
+test tests::test_record_builder ... ok
+test tests::test_schema_drift_records ... ok
+test visualization::tests::test_html_report_generation ... ok
+test visualization::tests::test_dashboard_generation ... ok
+test profiler::tests::test_benchmark_runner ... ok
+test tests::test_large_record_set ... ok
+test debug_tools::tests::test_performance_monitor ... ok
+test profiler::tests::test_profiler_basic ... ok
+test profiler::tests::test_performance_analysis ... ok
+
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+     Running unittests src/main.rs (target/debug/deps/xtask-0320534ccca58188)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests jac_codec
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests jac_format
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests jac_io
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests jac_test_utils
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

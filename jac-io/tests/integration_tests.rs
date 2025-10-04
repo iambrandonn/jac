@@ -71,6 +71,7 @@ fn sample_projection_file() -> Vec<u8> {
 }
 
 #[test]
+#[ignore] // Slow test - runs in nightly/CI with STRESS_TESTS=1
 fn million_record_roundtrip_and_projection() {
     const RECORDS: usize = 1_000_000;
     let (header, mut opts) = default_compress_opts(100_000);
