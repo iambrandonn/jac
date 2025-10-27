@@ -1,14 +1,17 @@
 //! Comprehensive error test matrix covering all JacError variants
 
-use jac_codec::{block_builder::BlockData, BlockBuilder, Codec, CompressOpts, DecompressOpts};
+use jac_codec::{
+    block_builder::BlockData, BlockBuilder, Codec, CompressOpts, DecompressOpts,
+    TryAddRecordOutcome,
+};
 use jac_format::varint::{decode_uleb128, encode_uleb128};
 use jac_format::{
     constants::FLAG_NESTED_OPAQUE, BlockHeader, FieldDirectoryEntry, FileHeader, JacError, Limits,
 };
 use jac_io::{
     execute_compress, execute_decompress, execute_project, CompressOptions, CompressRequest,
-    DecompressFormat, DecompressOptions, DecompressRequest, InputSource, JacInput, JacReader,
-    OutputSink, ProjectFormat, ProjectRequest,
+    ContainerFormat, DecompressFormat, DecompressOptions, DecompressRequest, InputSource, JacInput,
+    JacReader, OutputSink, ProjectFormat, ProjectRequest,
 };
 use serde_json::{json, Map, Value};
 use std::io::Cursor;
@@ -27,7 +30,7 @@ impl ErrorTestMatrix {
     pub fn test_invalid_magic() {
         let mut bytes = vec![0x4A, 0x41, 0x43, 0x01]; // Valid magic
         bytes[0] = 0xFF; // Corrupt first byte
-        // Add enough bytes to pass the minimum length check
+                         // Add enough bytes to pass the minimum length check
         bytes.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
 
         match JacReader::new(Cursor::new(bytes), DecompressOpts::default()) {
@@ -42,7 +45,7 @@ impl ErrorTestMatrix {
     pub fn test_unsupported_version() {
         let mut bytes = vec![0x4A, 0x41, 0x43, 0x01]; // Valid magic
         bytes[3] = 0xFF; // Invalid version
-        // Add enough bytes to pass the minimum length check
+                         // Add enough bytes to pass the minimum length check
         bytes.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
 
         match JacReader::new(Cursor::new(bytes), DecompressOpts::default()) {
@@ -83,7 +86,8 @@ impl ErrorTestMatrix {
             *byte ^= 0xFF;
         }
 
-        let mut reader = JacReader::new(Cursor::new(bytes), DecompressOpts::default()).expect("reader");
+        let mut reader =
+            JacReader::new(Cursor::new(bytes), DecompressOpts::default()).expect("reader");
         let mut stream = reader.record_stream().expect("record stream");
 
         match stream.next() {
@@ -98,7 +102,8 @@ impl ErrorTestMatrix {
         let (file_header, block_header, segments) = build_test_block(&[json!({"id": 42})]);
         let bytes = encode_test_file(&file_header, &block_header, &segments, true); // Tamper checksum
 
-        let mut reader = JacReader::new(Cursor::new(bytes), DecompressOpts::default()).expect("reader");
+        let mut reader =
+            JacReader::new(Cursor::new(bytes), DecompressOpts::default()).expect("reader");
         let mut stream = reader.record_stream().expect("record stream");
 
         match stream.next() {
@@ -114,7 +119,8 @@ impl ErrorTestMatrix {
         let mut bytes = encode_test_file(&file_header, &block_header, &segments, false);
         bytes.truncate(bytes.len() - 3); // Truncate
 
-        let mut reader = JacReader::new(Cursor::new(bytes), DecompressOpts::default()).expect("reader");
+        let mut reader =
+            JacReader::new(Cursor::new(bytes), DecompressOpts::default()).expect("reader");
         let mut stream = reader.record_stream().expect("record stream");
 
         match stream.next() {
@@ -134,7 +140,8 @@ impl ErrorTestMatrix {
         }
 
         let bytes = encode_test_file(&file_header, &block_header, &segments, false);
-        let mut reader = JacReader::new(Cursor::new(bytes), DecompressOpts::default()).expect("reader");
+        let mut reader =
+            JacReader::new(Cursor::new(bytes), DecompressOpts::default()).expect("reader");
         let mut stream = reader.record_stream().expect("record stream");
 
         match stream.next() {
@@ -174,10 +181,11 @@ impl ErrorTestMatrix {
     pub fn test_type_mismatch() {
         let request = CompressRequest {
             input: InputSource::JsonArrayReader(Box::new(Cursor::new(Vec::from(
-                b"{\"id\":1}\n" as &[u8],
+                b"invalid json content\n" as &[u8],
             )))),
             output: OutputSink::Writer(Box::new(Cursor::new(Vec::new()))),
             options: CompressOptions::default(),
+            container_hint: Some(ContainerFormat::JsonArray),
             emit_index: true,
         };
 
@@ -220,7 +228,8 @@ impl ErrorTestMatrix {
         segments[field_index] = segment;
         let bytes = encode_test_file(&file_header, &block_header, &segments, false);
 
-        let mut reader = JacReader::new(Cursor::new(bytes), DecompressOpts::default()).expect("reader");
+        let mut reader =
+            JacReader::new(Cursor::new(bytes), DecompressOpts::default()).expect("reader");
         let mut stream = reader.record_stream().expect("record stream");
 
         match stream.next() {
@@ -232,10 +241,8 @@ impl ErrorTestMatrix {
     /// Test UnsupportedFeature error
     /// Triggered when encountering reserved or unsupported features
     pub fn test_unsupported_feature() {
-        let (file_header, block_header, mut segments) = build_test_block(&[
-            json!({"flag": true}),
-            json!({"flag": false}),
-        ]);
+        let (file_header, block_header, mut segments) =
+            build_test_block(&[json!({"flag": true}), json!({"flag": false})]);
 
         let field_index = block_header
             .fields
@@ -243,17 +250,15 @@ impl ErrorTestMatrix {
             .position(|entry| entry.field_name == "flag")
             .expect("flag field present");
 
-        let FieldDirectoryEntry {
-            presence_bytes,
-            ..
-        } = block_header.fields[field_index].clone();
+        let FieldDirectoryEntry { presence_bytes, .. } = block_header.fields[field_index].clone();
 
         // Overwrite tag stream with reserved tag = 7
         let tag_offset = presence_bytes;
         segments[field_index][tag_offset] = 0b0000_0111;
 
         let bytes = encode_test_file(&file_header, &block_header, &segments, false);
-        let mut reader = JacReader::new(Cursor::new(bytes), DecompressOpts::default()).expect("reader");
+        let mut reader =
+            JacReader::new(Cursor::new(bytes), DecompressOpts::default()).expect("reader");
         let mut stream = reader.record_stream().expect("record stream");
 
         match stream.next() {
@@ -267,17 +272,16 @@ impl ErrorTestMatrix {
     /// Test UnsupportedCompression error
     /// Triggered when encountering unknown compression codec
     pub fn test_unsupported_compression() {
-        let (file_header, mut block_header, segments) = build_test_block(&[
-            json!({"id": 1}),
-            json!({"id": 2}),
-        ]);
+        let (file_header, mut block_header, segments) =
+            build_test_block(&[json!({"id": 1}), json!({"id": 2})]);
 
         for entry in block_header.fields.iter_mut() {
             entry.compressor = 99; // Unknown compressor
         }
 
         let bytes = encode_test_file(&file_header, &block_header, &segments, false);
-        let mut reader = JacReader::new(Cursor::new(bytes), DecompressOpts::default()).expect("reader");
+        let mut reader =
+            JacReader::new(Cursor::new(bytes), DecompressOpts::default()).expect("reader");
         let mut stream = reader.record_stream().expect("record stream");
 
         match stream.next() {
@@ -292,6 +296,7 @@ impl ErrorTestMatrix {
             input: InputSource::NdjsonPath(PathBuf::from("/definitely/missing.ndjson")),
             output: OutputSink::Writer(Box::new(Cursor::new(Vec::new()))),
             options: CompressOptions::default(),
+            container_hint: None,
             emit_index: false,
         };
 
@@ -331,6 +336,7 @@ impl ErrorTestMatrix {
             input: InputSource::NdjsonReader(Box::new(Cursor::new(b"{invalid}\n".to_vec()))),
             output: OutputSink::Writer(Box::new(Cursor::new(Vec::new()))),
             options: CompressOptions::default(),
+            container_hint: Some(ContainerFormat::Ndjson),
             emit_index: false,
         };
 
@@ -377,9 +383,15 @@ fn build_test_block(records: &[Value]) -> (FileHeader, BlockHeader, Vec<Vec<u8>>
 
     let mut builder = BlockBuilder::new(opts.clone());
     for record in records {
-        builder
-            .add_record(map_from(record.clone()))
-            .expect("add record");
+        match builder
+            .try_add_record(map_from(record.clone()))
+            .expect("try add record")
+        {
+            TryAddRecordOutcome::Added => {}
+            TryAddRecordOutcome::BlockFull { .. } => {
+                panic!("unexpected block flush in error matrix setup")
+            }
+        }
     }
 
     let BlockData {

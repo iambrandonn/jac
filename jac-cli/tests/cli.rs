@@ -6,7 +6,7 @@ use std::error::Error;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use tempfile::TempDir;
+use tempfile::{tempdir, TempDir};
 
 struct SampleFile {
     _dir: TempDir,
@@ -211,6 +211,71 @@ fn cat_unknown_field_fails() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
+fn unpack_auto_defaults_to_ndjson_output() -> Result<(), Box<dyn Error>> {
+    let sample = build_sample_file()?;
+    let dir = tempdir()?;
+    let output_path = dir.path().join("out.ndjson");
+
+    assert_cmd::Command::cargo_bin("jac")?
+        .args([
+            "unpack",
+            sample.jac_path.to_str().unwrap(),
+            "-o",
+            output_path.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let contents = fs::read_to_string(&output_path)?;
+    let lines: Vec<_> = contents
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    assert_eq!(lines.len(), 2);
+    for line in &lines {
+        serde_json::from_str::<Value>(line)?;
+    }
+    assert!(!contents.trim_start().starts_with('['));
+    Ok(())
+}
+
+#[test]
+fn unpack_auto_preserves_json_array_wrapper() -> Result<(), Box<dyn Error>> {
+    let dir = tempdir()?;
+    let input_path = dir.path().join("input.json");
+    let jac_path = dir.path().join("output.jac");
+    let output_path = dir.path().join("decoded.json");
+
+    fs::write(&input_path, r#"[{"id":1},{"id":2}]"#)?;
+
+    assert_cmd::Command::cargo_bin("jac")?
+        .args([
+            "pack",
+            input_path.to_str().unwrap(),
+            "-o",
+            jac_path.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    assert_cmd::Command::cargo_bin("jac")?
+        .args([
+            "unpack",
+            jac_path.to_str().unwrap(),
+            "-o",
+            output_path.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let decoded = fs::read_to_string(&output_path)?;
+    let value: Value = serde_json::from_str(&decoded)?;
+    assert!(value.is_array());
+    assert_eq!(value.as_array().unwrap().len(), 2);
+    Ok(())
+}
+
+#[test]
 fn pack_accepts_bom_prefixed_ndjson() -> Result<(), Box<dyn Error>> {
     let dir = tempfile::tempdir()?;
     let input_path = dir.path().join("bom.ndjson");
@@ -247,6 +312,53 @@ fn pack_accepts_bom_prefixed_ndjson() -> Result<(), Box<dyn Error>> {
         .collect();
     assert_eq!(values, vec![1, 2, 3]);
 
+    Ok(())
+}
+
+#[test]
+fn pack_requires_allow_flag_for_large_segments() -> Result<(), Box<dyn Error>> {
+    let dir = tempfile::tempdir()?;
+    let input_path = dir.path().join("input.ndjson");
+    let output_path = dir.path().join("output.jac");
+    fs::write(&input_path, "{\"value\":1}\n")?;
+
+    assert_cmd::Command::cargo_bin("jac")?
+        .args([
+            "pack",
+            input_path.to_str().unwrap(),
+            "-o",
+            output_path.to_str().unwrap(),
+            "--max-segment-bytes",
+            "134217728",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("--allow-large-segments"));
+    Ok(())
+}
+
+#[test]
+fn pack_allows_large_segments_with_confirmation() -> Result<(), Box<dyn Error>> {
+    let dir = tempfile::tempdir()?;
+    let input_path = dir.path().join("input.ndjson");
+    let output_path = dir.path().join("output.jac");
+    fs::write(&input_path, "{\"value\":1}\n{\"value\":2}\n")?;
+
+    assert_cmd::Command::cargo_bin("jac")?
+        .args([
+            "pack",
+            input_path.to_str().unwrap(),
+            "-o",
+            output_path.to_str().unwrap(),
+            "--max-segment-bytes",
+            "134217728",
+            "--allow-large-segments",
+        ])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "Warning: increasing --max-segment-bytes",
+        ));
     Ok(())
 }
 

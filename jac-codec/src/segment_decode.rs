@@ -413,7 +413,7 @@ mod tests {
     use super::*;
     use crate::{
         block_builder::{BlockBuilder, BlockData},
-        Codec, CompressOpts,
+        Codec, CompressOpts, TryAddRecordOutcome,
     };
     use serde_json::{json, Map};
 
@@ -432,7 +432,15 @@ mod tests {
 
         let mut builder = BlockBuilder::new(opts.clone());
         for record in records {
-            builder.add_record(record.clone()).unwrap();
+            match builder
+                .try_add_record(record.clone())
+                .expect("try add record")
+            {
+                TryAddRecordOutcome::Added => {}
+                TryAddRecordOutcome::BlockFull { .. } => {
+                    panic!("unexpected block flush in segment decode test helper")
+                }
+            }
         }
 
         (builder.finalize().unwrap(), limits)

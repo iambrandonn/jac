@@ -19,6 +19,7 @@ testdata/generated/
 *.jac
 *.ndjson
 *.json
+!testdata/json_array_nested_repro.json
 
 # Benchmarks
 criterion/
@@ -35,3 +36,5 @@ lcov.info
 # Documentation
 /doc/
 
+# Claude
+.claude

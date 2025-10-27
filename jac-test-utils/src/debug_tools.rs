@@ -3,10 +3,10 @@
 //! This module provides tools for analyzing test failures, monitoring performance,
 //! and visualizing test results to improve debugging and maintenance.
 
-use std::collections::HashMap;
-use std::time::{Duration, Instant};
-use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 /// Test execution metrics for performance monitoring
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -62,9 +62,9 @@ pub struct TestVisualization {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PerformanceChart {
     pub test_names: Vec<String>,
-    pub execution_times: Vec<f64>, // in seconds
+    pub execution_times: Vec<f64>,      // in seconds
     pub memory_usage: Vec<Option<f64>>, // in MB
-    pub cpu_usage: Vec<Option<f64>>, // in percent
+    pub cpu_usage: Vec<Option<f64>>,    // in percent
 }
 
 /// Failure breakdown for visualization
@@ -80,9 +80,9 @@ pub struct FailureBreakdown {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryUsageChart {
     pub test_names: Vec<String>,
-    pub peak_memory: Vec<Option<f64>>, // in MB
+    pub peak_memory: Vec<Option<f64>>,    // in MB
     pub average_memory: Vec<Option<f64>>, // in MB
-    pub memory_trend: Vec<f64>, // memory usage over time
+    pub memory_trend: Vec<f64>,           // memory usage over time
 }
 
 /// Execution timeline data
@@ -146,9 +146,7 @@ impl TestPerformanceMonitor {
         let passed_tests = self.metrics.iter().filter(|m| m.success).count() as u32;
         let failed_tests = total_tests - passed_tests;
 
-        let total_execution_time: Duration = self.metrics.iter()
-            .map(|m| m.execution_time)
-            .sum();
+        let total_execution_time: Duration = self.metrics.iter().map(|m| m.execution_time).sum();
 
         let average_execution_time = if total_tests > 0 {
             Duration::from_nanos(total_execution_time.as_nanos() as u64 / total_tests as u64)
@@ -156,19 +154,27 @@ impl TestPerformanceMonitor {
             Duration::ZERO
         };
 
-        let slowest_test = self.metrics.iter()
+        let slowest_test = self
+            .metrics
+            .iter()
             .max_by_key(|m| m.execution_time)
             .map(|m| m.test_name.clone());
 
-        let fastest_test = self.metrics.iter()
+        let fastest_test = self
+            .metrics
+            .iter()
             .min_by_key(|m| m.execution_time)
             .map(|m| m.test_name.clone());
 
-        let memory_peak_bytes = self.metrics.iter()
+        let memory_peak_bytes = self
+            .metrics
+            .iter()
             .filter_map(|m| m.memory_usage_bytes)
             .max();
 
-        let cpu_peak_percent = self.metrics.iter()
+        let cpu_peak_percent = self
+            .metrics
+            .iter()
             .filter_map(|m| m.cpu_usage_percent)
             .max_by(|a, b| a.partial_cmp(b).unwrap());
 
@@ -187,21 +193,22 @@ impl TestPerformanceMonitor {
 
     /// Generate test visualization data
     pub fn generate_visualization(&self) -> TestVisualization {
-        let test_names: Vec<String> = self.metrics.iter()
-            .map(|m| m.test_name.clone())
-            .collect();
+        let test_names: Vec<String> = self.metrics.iter().map(|m| m.test_name.clone()).collect();
 
-        let execution_times: Vec<f64> = self.metrics.iter()
+        let execution_times: Vec<f64> = self
+            .metrics
+            .iter()
             .map(|m| m.execution_time.as_secs_f64())
             .collect();
 
-        let memory_usage: Vec<Option<f64>> = self.metrics.iter()
+        let memory_usage: Vec<Option<f64>> = self
+            .metrics
+            .iter()
             .map(|m| m.memory_usage_bytes.map(|b| b as f64 / 1_048_576.0)) // Convert to MB
             .collect();
 
-        let cpu_usage: Vec<Option<f64>> = self.metrics.iter()
-            .map(|m| m.cpu_usage_percent)
-            .collect();
+        let cpu_usage: Vec<Option<f64>> =
+            self.metrics.iter().map(|m| m.cpu_usage_percent).collect();
 
         let performance_chart = PerformanceChart {
             test_names: test_names.clone(),
@@ -227,7 +234,8 @@ impl TestPerformanceMonitor {
             self.metrics.iter().filter(|m| !m.success).count() as f64 / self.metrics.len() as f64
         };
 
-        let most_common_error = error_types.iter()
+        let most_common_error = error_types
+            .iter()
             .max_by_key(|(_, count)| *count)
             .map(|(error_type, _)| error_type.clone());
 
@@ -248,8 +256,22 @@ impl TestPerformanceMonitor {
         let execution_timeline = ExecutionTimeline {
             timestamps: self.metrics.iter().map(|m| m.timestamp).collect(),
             test_names,
-            durations: self.metrics.iter().map(|m| m.execution_time.as_secs_f64()).collect(),
-            status: self.metrics.iter().map(|m| if m.success { "passed".to_string() } else { "failed".to_string() }).collect(),
+            durations: self
+                .metrics
+                .iter()
+                .map(|m| m.execution_time.as_secs_f64())
+                .collect(),
+            status: self
+                .metrics
+                .iter()
+                .map(|m| {
+                    if m.success {
+                        "passed".to_string()
+                    } else {
+                        "failed".to_string()
+                    }
+                })
+                .collect(),
         };
 
         TestVisualization {
@@ -305,7 +327,12 @@ impl TestFailureAnalyzer {
     }
 
     /// Add a failure for analysis
-    pub fn add_failure(&mut self, test_name: String, error_message: String, stack_trace: Option<String>) {
+    pub fn add_failure(
+        &mut self,
+        test_name: String,
+        error_message: String,
+        stack_trace: Option<String>,
+    ) {
         let error_type = extract_error_type(&error_message);
         let suggestions = generate_suggestions(&error_type, &error_message);
 
@@ -314,9 +341,9 @@ impl TestFailureAnalyzer {
             error_type,
             error_message,
             stack_trace,
-            input_data: None, // TODO: implement input data capture
+            input_data: None,      // TODO: implement input data capture
             expected_output: None, // TODO: implement expected output capture
-            actual_output: None, // TODO: implement actual output capture
+            actual_output: None,   // TODO: implement actual output capture
             suggestions,
         };
 
@@ -336,7 +363,10 @@ impl TestFailureAnalyzer {
         // Group failures by error type
         let mut failures_by_type: HashMap<String, Vec<&FailureAnalysis>> = HashMap::new();
         for failure in &self.failures {
-            failures_by_type.entry(failure.error_type.clone()).or_default().push(failure);
+            failures_by_type
+                .entry(failure.error_type.clone())
+                .or_default()
+                .push(failure);
         }
 
         // Summary
@@ -387,22 +417,23 @@ fn generate_suggestions(error_type: &str, _error_message: &str) -> Vec<String> {
             suggestions.push("Check if the assertion condition is correct".to_string());
             suggestions.push("Verify input data matches expected format".to_string());
             suggestions.push("Consider adding debug output to understand the failure".to_string());
-        },
+        }
         "TimeoutError" => {
-            suggestions.push("Check if the test is waiting for a condition that never occurs".to_string());
+            suggestions
+                .push("Check if the test is waiting for a condition that never occurs".to_string());
             suggestions.push("Consider increasing timeout limits if appropriate".to_string());
             suggestions.push("Look for potential deadlocks or infinite loops".to_string());
-        },
+        }
         "MemoryError" => {
             suggestions.push("Check for memory leaks in the test".to_string());
             suggestions.push("Consider reducing test data size".to_string());
             suggestions.push("Verify that resources are properly cleaned up".to_string());
-        },
+        }
         "IoError" => {
             suggestions.push("Check file paths and permissions".to_string());
             suggestions.push("Verify that required files exist".to_string());
             suggestions.push("Check disk space availability".to_string());
-        },
+        }
         _ => {
             suggestions.push("Review the error message for specific clues".to_string());
             suggestions.push("Check test setup and teardown".to_string());
@@ -519,7 +550,11 @@ impl TestMaintenanceTools {
         }
 
         report.push_str(&format!("Total files: {}\n", total_files));
-        report.push_str(&format!("Total size: {} bytes ({:.2} MB)\n", total_size, total_size as f64 / 1_048_576.0));
+        report.push_str(&format!(
+            "Total size: {} bytes ({:.2} MB)\n",
+            total_size,
+            total_size as f64 / 1_048_576.0
+        ));
         report.push_str(&format!("JSON files: {}\n", json_files));
         report.push_str(&format!("NDJSON files: {}\n", ndjson_files));
         report.push_str(&format!("Other files: {}\n", other_files));
@@ -591,7 +626,10 @@ mod tests {
     fn test_error_type_extraction() {
         assert_eq!(extract_error_type("assertion failed"), "AssertionError");
         assert_eq!(extract_error_type("timeout occurred"), "TimeoutError");
-        assert_eq!(extract_error_type("memory allocation failed"), "MemoryError");
+        assert_eq!(
+            extract_error_type("memory allocation failed"),
+            "MemoryError"
+        );
         assert_eq!(extract_error_type("io error"), "IoError");
         assert_eq!(extract_error_type("unknown error"), "UnknownError");
     }

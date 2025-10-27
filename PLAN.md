@@ -981,6 +981,7 @@ Commands:
 - [ ] `jac cat input.jac --field userId` → stream values
 - [ ] **`pack --project` semantics**: Document that this filters input records to only include specified fields before encoding (reduces .jac size)
   - Document precedence of per-field codec overrides vs global defaults
+- [x] Persist source container hint in header flags and auto-select NDJSON vs JSON array on unpack (CLI default follows hint).
 
 **Tests:**
 - End-to-end: pack → unpack → diff (semantic)
@@ -1207,4 +1208,3 @@ Commands:
 ---
 
 **Questions or clarifications needed?** Please update this plan as implementation progresses and new insights emerge.
-

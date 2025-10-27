@@ -3,7 +3,7 @@
 use jac_codec::{
     block_builder::BlockData,
     block_decode::{BlockDecoder, DecompressOpts},
-    BlockBuilder, Codec, CompressOpts,
+    BlockBuilder, Codec, CompressOpts, TryAddRecordOutcome,
 };
 use jac_format::constants::{ENCODING_FLAG_DELTA, ENCODING_FLAG_DICTIONARY};
 // Unused imports removed for now
@@ -38,7 +38,12 @@ fn build_spec_block() -> (BlockData, Vec<Map<String, Value>>) {
 
     let mut builder = BlockBuilder::new(opts);
     for record in records.iter().cloned() {
-        builder.add_record(record).expect("add record");
+        match builder.try_add_record(record).expect("try add record") {
+            TryAddRecordOutcome::Added => {}
+            TryAddRecordOutcome::BlockFull { .. } => {
+                panic!("unexpected block flush while building spec block")
+            }
+        }
     }
 
     let block = builder.finalize().expect("finalize block");
@@ -167,9 +172,15 @@ fn schema_drift_validation() {
 
     let mut builder = BlockBuilder::new(opts);
     for record in records.iter() {
-        builder
-            .add_record(record.as_object().unwrap().clone())
-            .expect("add record");
+        match builder
+            .try_add_record(record.as_object().unwrap().clone())
+            .expect("try add record")
+        {
+            TryAddRecordOutcome::Added => {}
+            TryAddRecordOutcome::BlockFull { .. } => {
+                panic!("unexpected block flush in schema drift test")
+            }
+        }
     }
 
     let block = builder.finalize().expect("finalize block");
@@ -219,7 +230,11 @@ fn multi_level_validation() {
     // Segment offsets are relative to the start of the segments region (after header)
     let mut expected_offset = 0;
     for (i, field) in block.header.fields.iter().enumerate() {
-        assert_eq!(field.segment_offset, expected_offset, "field {} offset mismatch: actual {}, expected {}", i, field.segment_offset, expected_offset);
+        assert_eq!(
+            field.segment_offset, expected_offset,
+            "field {} offset mismatch: actual {}, expected {}",
+            i, field.segment_offset, expected_offset
+        );
         expected_offset += field.segment_compressed_len;
 
         // Verify segment bytes exist
@@ -231,23 +246,21 @@ fn multi_level_validation() {
 /// Test deeply nested objects and arrays
 #[test]
 fn deeply_nested_structures() {
-    let records: Vec<Value> = vec![
-        json!({
-            "id": 1,
-            "nested": {
-                "level1": {
-                    "level2": {
-                        "level3": {
-                            "level4": {
-                                "level5": "deep_value"
-                            }
+    let records: Vec<Value> = vec![json!({
+        "id": 1,
+        "nested": {
+            "level1": {
+                "level2": {
+                    "level3": {
+                        "level4": {
+                            "level5": "deep_value"
                         }
                     }
                 }
-            },
-            "array": [1, 2, [3, 4, [5, 6, [7, 8]]]]
-        }),
-    ];
+            }
+        },
+        "array": [1, 2, [3, 4, [5, 6, [7, 8]]]]
+    })];
 
     let mut opts = CompressOpts::default();
     opts.block_target_records = records.len();
@@ -255,9 +268,15 @@ fn deeply_nested_structures() {
 
     let mut builder = BlockBuilder::new(opts);
     for record in records.iter() {
-        builder
-            .add_record(record.as_object().unwrap().clone())
-            .expect("add record");
+        match builder
+            .try_add_record(record.as_object().unwrap().clone())
+            .expect("try add record")
+        {
+            TryAddRecordOutcome::Added => {}
+            TryAddRecordOutcome::BlockFull { .. } => {
+                panic!("unexpected block flush in deeply nested test")
+            }
+        }
     }
 
     let block = builder.finalize().expect("finalize block");
@@ -309,9 +328,15 @@ fn high_precision_decimals() {
 
     let mut builder = BlockBuilder::new(opts);
     for record in records.iter() {
-        builder
-            .add_record(record.as_object().unwrap().clone())
-            .expect("add record");
+        match builder
+            .try_add_record(record.as_object().unwrap().clone())
+            .expect("try add record")
+        {
+            TryAddRecordOutcome::Added => {}
+            TryAddRecordOutcome::BlockFull { .. } => {
+                panic!("unexpected block flush in high precision test")
+            }
+        }
     }
 
     let block = builder.finalize().expect("finalize block");
@@ -323,8 +348,18 @@ fn high_precision_decimals() {
     assert_eq!(decoded_records.len(), 4);
     for (i, record) in decoded_records.iter().enumerate() {
         let value = record.get("value").unwrap().as_str().unwrap();
-        let original = records[i].as_object().unwrap().get("value").unwrap().as_str().unwrap();
-        assert_eq!(value, original, "decimal precision preserved for record {}", i);
+        let original = records[i]
+            .as_object()
+            .unwrap()
+            .get("value")
+            .unwrap()
+            .as_str()
+            .unwrap();
+        assert_eq!(
+            value, original,
+            "decimal precision preserved for record {}",
+            i
+        );
     }
 }
 
@@ -339,9 +374,15 @@ fn empty_and_single_record_files() {
     opts.default_codec = Codec::None;
 
     let mut builder = BlockBuilder::new(opts);
-    builder
-        .add_record(single_record[0].as_object().unwrap().clone())
-        .expect("add record");
+    match builder
+        .try_add_record(single_record[0].as_object().unwrap().clone())
+        .expect("try add record")
+    {
+        TryAddRecordOutcome::Added => {}
+        TryAddRecordOutcome::BlockFull { .. } => {
+            panic!("unexpected block flush for single record")
+        }
+    }
 
     let block = builder.finalize().expect("finalize block");
     let bytes = assemble_block_bytes(&block);
@@ -350,7 +391,10 @@ fn empty_and_single_record_files() {
 
     assert_eq!(decoded_records.len(), 1);
     assert_eq!(decoded_records[0].get("id").unwrap(), 1);
-    assert_eq!(decoded_records[0].get("value").unwrap().as_str().unwrap(), "test");
+    assert_eq!(
+        decoded_records[0].get("value").unwrap().as_str().unwrap(),
+        "test"
+    );
 }
 
 /// Test large synthetic block (approaching limits)
@@ -374,9 +418,15 @@ fn large_synthetic_block() {
 
     let mut builder = BlockBuilder::new(opts);
     for record in records.iter() {
-        builder
-            .add_record(record.as_object().unwrap().clone())
-            .expect("add record");
+        match builder
+            .try_add_record(record.as_object().unwrap().clone())
+            .expect("try add record")
+        {
+            TryAddRecordOutcome::Added => {}
+            TryAddRecordOutcome::BlockFull { .. } => {
+                panic!("unexpected block flush in large synthetic block test")
+            }
+        }
     }
 
     let block = builder.finalize().expect("finalize block");
@@ -401,7 +451,11 @@ fn large_synthetic_block() {
     // Check if dictionary encoding was used (depends on threshold)
     if user_entry.encoding_flags & ENCODING_FLAG_DICTIONARY != 0 {
         // Should be much less than 1000 unique values due to repetition
-        assert!(user_entry.dict_entry_count < 1000, "dict_entry_count: {}", user_entry.dict_entry_count);
+        assert!(
+            user_entry.dict_entry_count < 1000,
+            "dict_entry_count: {}",
+            user_entry.dict_entry_count
+        );
     } else {
         // If not dictionary encoded, verify it's raw encoding
         assert_eq!(user_entry.encoding_flags & ENCODING_FLAG_DICTIONARY, 0);
@@ -425,9 +479,15 @@ fn unicode_edge_cases() {
 
     let mut builder = BlockBuilder::new(opts);
     for record in records.iter() {
-        builder
-            .add_record(record.as_object().unwrap().clone())
-            .expect("add record");
+        match builder
+            .try_add_record(record.as_object().unwrap().clone())
+            .expect("try add record")
+        {
+            TryAddRecordOutcome::Added => {}
+            TryAddRecordOutcome::BlockFull { .. } => {
+                panic!("unexpected block flush in unicode preservation test")
+            }
+        }
     }
 
     let block = builder.finalize().expect("finalize block");
@@ -438,7 +498,13 @@ fn unicode_edge_cases() {
     assert_eq!(decoded_records.len(), 5);
     for (i, record) in decoded_records.iter().enumerate() {
         let text = record.get("text").unwrap().as_str().unwrap();
-        let original = records[i].as_object().unwrap().get("text").unwrap().as_str().unwrap();
+        let original = records[i]
+            .as_object()
+            .unwrap()
+            .get("text")
+            .unwrap()
+            .as_str()
+            .unwrap();
         assert_eq!(text, original, "Unicode text preserved for record {}", i);
     }
 }
@@ -465,9 +531,15 @@ fn boundary_values_and_edge_cases() {
 
     let mut builder = BlockBuilder::new(opts);
     for record in records.iter() {
-        builder
-            .add_record(record.as_object().unwrap().clone())
-            .expect("add record");
+        match builder
+            .try_add_record(record.as_object().unwrap().clone())
+            .expect("try add record")
+        {
+            TryAddRecordOutcome::Added => {}
+            TryAddRecordOutcome::BlockFull { .. } => {
+                panic!("unexpected block flush in boundary values test")
+            }
+        }
     }
 
     let block = builder.finalize().expect("finalize block");
@@ -482,8 +554,29 @@ fn boundary_values_and_edge_cases() {
     assert_eq!(decoded_records[1].get("value").unwrap(), i64::MAX);
     assert_eq!(decoded_records[2].get("value").unwrap(), i64::MIN);
     assert_eq!(decoded_records[3].get("value").unwrap(), 0.0);
-    assert_eq!(decoded_records[6].get("value").unwrap().as_str().unwrap(), "");
-    assert_eq!(decoded_records[7].get("value").unwrap().as_str().unwrap().len(), 1000);
-    assert!(decoded_records[8].get("value").unwrap().as_array().unwrap().is_empty());
-    assert!(decoded_records[9].get("value").unwrap().as_object().unwrap().is_empty());
+    assert_eq!(
+        decoded_records[6].get("value").unwrap().as_str().unwrap(),
+        ""
+    );
+    assert_eq!(
+        decoded_records[7]
+            .get("value")
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .len(),
+        1000
+    );
+    assert!(decoded_records[8]
+        .get("value")
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .is_empty());
+    assert!(decoded_records[9]
+        .get("value")
+        .unwrap()
+        .as_object()
+        .unwrap()
+        .is_empty());
 }

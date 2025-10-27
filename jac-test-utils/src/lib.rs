@@ -5,12 +5,12 @@
 use serde_json::Value;
 use std::collections::HashMap;
 
+pub mod debug_tools;
+pub mod profiler;
 pub mod test_categories;
 pub mod test_config;
-pub mod debug_tools;
-pub mod visualization;
-pub mod profiler;
 pub mod test_debugger;
+pub mod visualization;
 
 /// Builder for creating test records with common patterns
 pub struct RecordBuilder {
@@ -27,13 +27,15 @@ impl RecordBuilder {
 
     /// Add a field with a string value
     pub fn string(mut self, key: &str, value: &str) -> Self {
-        self.fields.insert(key.to_string(), Value::String(value.to_string()));
+        self.fields
+            .insert(key.to_string(), Value::String(value.to_string()));
         self
     }
 
     /// Add a field with an integer value
     pub fn int(mut self, key: &str, value: i64) -> Self {
-        self.fields.insert(key.to_string(), Value::Number(value.into()));
+        self.fields
+            .insert(key.to_string(), Value::Number(value.into()));
         self
     }
 
@@ -51,7 +53,8 @@ impl RecordBuilder {
 
     /// Add a field with a decimal value (as string to preserve precision)
     pub fn decimal(mut self, key: &str, value: &str) -> Self {
-        self.fields.insert(key.to_string(), Value::String(value.to_string()));
+        self.fields
+            .insert(key.to_string(), Value::String(value.to_string()));
         self
     }
 
@@ -92,11 +95,11 @@ impl TestDataGenerator {
                 .build(),
             RecordBuilder::new()
                 .string("id", "2")
-                .string("value", "hello")  // Same field, different type
+                .string("value", "hello") // Same field, different type
                 .build(),
             RecordBuilder::new()
                 .string("id", "3")
-                .bool("value", true)  // Same field, different type
+                .bool("value", true) // Same field, different type
                 .build(),
         ]
     }
@@ -108,17 +111,15 @@ impl TestDataGenerator {
             let mut level = Value::Object(serde_json::Map::new());
             level.as_object_mut().unwrap().insert(
                 format!("level_{}", i),
-                Value::String(format!("value_{}", i))
+                Value::String(format!("value_{}", i)),
             );
             nested = level;
         }
 
-        vec![
-            RecordBuilder::new()
-                .string("id", "deep")
-                .object("nested", nested)
-                .build()
-        ]
+        vec![RecordBuilder::new()
+            .string("id", "deep")
+            .object("nested", nested)
+            .build()]
     }
 
     /// Generate records with high-precision decimal values
@@ -205,7 +206,7 @@ impl TestDataGenerator {
                     .string("level", level)
                     .string("user", &format!("user_{}", user_id))
                     .string("message", &format!("Test message number {}", i))
-                    .build()
+                    .build(),
             );
         }
 
@@ -230,11 +231,7 @@ pub mod assertions {
     }
 
     /// Assert that a field projection contains expected values
-    pub fn assert_field_projection(
-        actual: &[Value],
-        expected: &[Value],
-        field_name: &str,
-    ) {
+    pub fn assert_field_projection(actual: &[Value], expected: &[Value], field_name: &str) {
         if actual != expected {
             panic!(
                 "Field projection assertion failed for field '{}':\nExpected: {:?}\nActual: {:?}",

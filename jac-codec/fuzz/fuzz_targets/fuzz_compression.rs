@@ -1,7 +1,6 @@
 #![no_main]
 
-use jac_codec::block_builder::BlockBuilder;
-use jac_codec::column::ColumnBuilder;
+use jac_codec::{block_builder::BlockBuilder, column::ColumnBuilder, Codec, TryAddRecordOutcome};
 use jac_format::{CompressOpts, Limits, TypeTag};
 use libfuzzer_sys::fuzz_target;
 use serde_json::Value;
@@ -12,10 +11,10 @@ fuzz_target!(|data: &[u8]| {
         return;
     }
 
-    let opts = CompressOpts {
-        limits: Limits::default(),
-        compression_level: 1, // Fast compression for fuzzing
-    };
+    let mut opts = CompressOpts::default();
+    opts.block_target_records = 128;
+    opts.default_codec = Codec::None;
+    opts.limits = Limits::default();
 
     // Create a simple test record from the fuzz data
     let mut records = Vec::new();
@@ -37,10 +36,20 @@ fuzz_target!(|data: &[u8]| {
     }
 
     // Try to build a block with the records
-    let mut builder = BlockBuilder::new(&opts);
+    let mut builder = BlockBuilder::new(opts.clone());
 
-    for record in records {
-        let _ = builder.add_record(&record);
+    for value in records {
+        if let Value::Object(map) = value {
+            match builder.try_add_record(map) {
+                Ok(TryAddRecordOutcome::Added) => {}
+                Ok(TryAddRecordOutcome::BlockFull { record }) => {
+                    let _ = builder.finalize();
+                    builder = BlockBuilder::new(opts.clone());
+                    let _ = builder.try_add_record(record);
+                }
+                Err(_) => {}
+            }
+        }
     }
 
     let _ = builder.finalize();

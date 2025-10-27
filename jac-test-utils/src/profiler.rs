@@ -3,9 +3,9 @@
 //! This module provides tools for profiling test execution and identifying
 //! performance bottlenecks and resource usage patterns.
 
-use std::time::{Duration, Instant};
-use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 /// Performance profiler for test execution
 pub struct TestProfiler {
@@ -122,9 +122,7 @@ impl TestProfiler {
 
     /// Analyze performance and identify bottlenecks
     pub fn analyze_performance(&self) -> PerformanceAnalysis {
-        let total_duration: Duration = self.measurements.iter()
-            .map(|m| m.duration)
-            .sum();
+        let total_duration: Duration = self.measurements.iter().map(|m| m.duration).sum();
 
         let average_duration = if !self.measurements.is_empty() {
             Duration::from_nanos(total_duration.as_nanos() as u64 / self.measurements.len() as u64)
@@ -136,7 +134,10 @@ impl TestProfiler {
         let mut sorted_measurements = self.measurements.clone();
         sorted_measurements.sort_by(|a, b| b.duration.cmp(&a.duration));
         let slowest_count = (sorted_measurements.len() / 10).max(1);
-        let slowest_operations = sorted_measurements.into_iter().take(slowest_count).collect();
+        let slowest_operations = sorted_measurements
+            .into_iter()
+            .take(slowest_count)
+            .collect();
 
         // Analyze memory usage
         let memory_pattern = self.analyze_memory_usage();
@@ -163,7 +164,9 @@ impl TestProfiler {
 
     /// Analyze memory usage patterns
     fn analyze_memory_usage(&self) -> MemoryUsagePattern {
-        let memory_values: Vec<u64> = self.measurements.iter()
+        let memory_values: Vec<u64> = self
+            .measurements
+            .iter()
             .filter_map(|m| m.memory_after)
             .collect();
 
@@ -178,7 +181,11 @@ impl TestProfiler {
         let memory_growth_rate = if memory_values.len() > 1 {
             let first_memory = memory_values[0];
             let last_memory = memory_values[memory_values.len() - 1];
-            let time_span = self.measurements.last().unwrap().timestamp
+            let time_span = self
+                .measurements
+                .last()
+                .unwrap()
+                .timestamp
                 .signed_duration_since(self.measurements.first().unwrap().timestamp)
                 .num_seconds() as f64;
 
@@ -204,11 +211,16 @@ impl TestProfiler {
 
     /// Analyze CPU usage patterns
     fn analyze_cpu_usage(&self) -> CpuUsagePattern {
-        let cpu_values: Vec<f64> = self.measurements.iter()
+        let cpu_values: Vec<f64> = self
+            .measurements
+            .iter()
             .filter_map(|m| m.cpu_usage)
             .collect();
 
-        let peak_cpu = cpu_values.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).copied();
+        let peak_cpu = cpu_values
+            .iter()
+            .max_by(|a, b| a.partial_cmp(b).unwrap())
+            .copied();
         let average_cpu = if !cpu_values.is_empty() {
             Some(cpu_values.iter().sum::<f64>() / cpu_values.len() as f64)
         } else {
@@ -216,7 +228,9 @@ impl TestProfiler {
         };
 
         // Find CPU-intensive operations
-        let cpu_intensive_operations = self.measurements.iter()
+        let cpu_intensive_operations = self
+            .measurements
+            .iter()
             .filter(|m| m.cpu_usage.map_or(false, |cpu| cpu > 80.0))
             .map(|m| m.name.clone())
             .collect();
@@ -230,25 +244,34 @@ impl TestProfiler {
 
     /// Analyze I/O usage patterns
     fn analyze_io_usage(&self) -> IoUsagePattern {
-        let total_io_operations = self.measurements.iter()
+        let total_io_operations = self
+            .measurements
+            .iter()
             .filter_map(|m| m.io_operations)
             .sum();
 
-        let io_intensive_operations = self.measurements.iter()
+        let io_intensive_operations = self
+            .measurements
+            .iter()
             .filter(|m| m.io_operations.map_or(false, |io| io > 1000))
             .map(|m| m.name.clone())
             .collect();
 
-        let io_bottlenecks = self.measurements.iter()
+        let io_bottlenecks = self
+            .measurements
+            .iter()
             .filter(|m| {
-                m.io_operations.map_or(false, |io| io > 10000) &&
-                m.duration.as_millis() > 1000
+                m.io_operations.map_or(false, |io| io > 10000) && m.duration.as_millis() > 1000
             })
             .map(|m| m.name.clone())
             .collect();
 
         IoUsagePattern {
-            total_io_operations: if total_io_operations > 0 { Some(total_io_operations) } else { None },
+            total_io_operations: if total_io_operations > 0 {
+                Some(total_io_operations)
+            } else {
+                None
+            },
             io_intensive_operations,
             io_bottlenecks,
         }
@@ -259,14 +282,16 @@ impl TestProfiler {
         let mut leaks = Vec::new();
 
         // Simple heuristic: if memory consistently grows without being freed
-        let memory_values: Vec<u64> = self.measurements.iter()
+        let memory_values: Vec<u64> = self
+            .measurements
+            .iter()
             .filter_map(|m| m.memory_after)
             .collect();
 
         if memory_values.len() > 3 {
             let mut growing = true;
             for i in 1..memory_values.len() {
-                if memory_values[i] <= memory_values[i-1] {
+                if memory_values[i] <= memory_values[i - 1] {
                     growing = false;
                     break;
                 }
@@ -290,7 +315,10 @@ impl TestProfiler {
                 bottlenecks.push(Bottleneck {
                     operation: measurement.name.clone(),
                     severity: BottleneckSeverity::Critical,
-                    description: format!("Operation took {} seconds", measurement.duration.as_secs()),
+                    description: format!(
+                        "Operation took {} seconds",
+                        measurement.duration.as_secs()
+                    ),
                     suggestions: vec![
                         "Consider optimizing the algorithm".to_string(),
                         "Check for unnecessary computations".to_string(),
@@ -301,7 +329,10 @@ impl TestProfiler {
                 bottlenecks.push(Bottleneck {
                     operation: measurement.name.clone(),
                     severity: BottleneckSeverity::High,
-                    description: format!("Operation took {} milliseconds", measurement.duration.as_millis()),
+                    description: format!(
+                        "Operation took {} milliseconds",
+                        measurement.duration.as_millis()
+                    ),
                     suggestions: vec![
                         "Consider caching results".to_string(),
                         "Check for redundant operations".to_string(),
@@ -313,11 +344,15 @@ impl TestProfiler {
         // Find memory-intensive operations
         for measurement in &self.measurements {
             if let Some(memory) = measurement.memory_after {
-                if memory > 100 * 1024 * 1024 { // 100MB
+                if memory > 100 * 1024 * 1024 {
+                    // 100MB
                     bottlenecks.push(Bottleneck {
                         operation: measurement.name.clone(),
                         severity: BottleneckSeverity::High,
-                        description: format!("Operation used {} MB of memory", memory / 1024 / 1024),
+                        description: format!(
+                            "Operation used {} MB of memory",
+                            memory / 1024 / 1024
+                        ),
                         suggestions: vec![
                             "Consider streaming data instead of loading all at once".to_string(),
                             "Check for memory leaks".to_string(),
@@ -335,7 +370,11 @@ impl TestProfiler {
                     bottlenecks.push(Bottleneck {
                         operation: measurement.name.clone(),
                         severity: BottleneckSeverity::Medium,
-                        description: format!("Operation performed {} I/O operations in {} ms", io_ops, measurement.duration.as_millis()),
+                        description: format!(
+                            "Operation performed {} I/O operations in {} ms",
+                            io_ops,
+                            measurement.duration.as_millis()
+                        ),
                         suggestions: vec![
                             "Consider batching I/O operations".to_string(),
                             "Use async I/O if possible".to_string(),
@@ -357,7 +396,9 @@ impl TestProfiler {
     }
 
     /// Load profiler data from file
-    pub fn load_data(path: &PathBuf) -> Result<Vec<PerformanceMeasurement>, Box<dyn std::error::Error>> {
+    pub fn load_data(
+        path: &PathBuf,
+    ) -> Result<Vec<PerformanceMeasurement>, Box<dyn std::error::Error>> {
         let data = std::fs::read_to_string(path)?;
         let measurements: Vec<PerformanceMeasurement> = serde_json::from_str(&data)?;
         Ok(measurements)
@@ -387,7 +428,8 @@ impl PerformanceBenchmark {
         let mut total_duration = Duration::ZERO;
 
         for i in 0..self.iterations {
-            self.profiler.start_operation(format!("{}_iteration_{}", name, i));
+            self.profiler
+                .start_operation(format!("{}_iteration_{}", name, i));
             let start = Instant::now();
 
             if let Err(e) = operation() {
@@ -414,13 +456,23 @@ impl PerformanceBenchmark {
         let mut report = String::new();
         report.push_str("# Performance Benchmark Report\n\n");
         report.push_str(&format!("Iterations: {}\n", self.iterations));
-        report.push_str(&format!("Total Duration: {:.2}s\n", analysis.total_duration.as_secs_f64()));
-        report.push_str(&format!("Average Duration: {:.2}ms\n\n", analysis.average_duration.as_millis()));
+        report.push_str(&format!(
+            "Total Duration: {:.2}s\n",
+            analysis.total_duration.as_secs_f64()
+        ));
+        report.push_str(&format!(
+            "Average Duration: {:.2}ms\n\n",
+            analysis.average_duration.as_millis()
+        ));
 
         if !analysis.slowest_operations.is_empty() {
             report.push_str("## Slowest Operations\n\n");
             for op in &analysis.slowest_operations {
-                report.push_str(&format!("- {}: {:.2}ms\n", op.name, op.duration.as_millis()));
+                report.push_str(&format!(
+                    "- {}: {:.2}ms\n",
+                    op.name,
+                    op.duration.as_millis()
+                ));
             }
             report.push_str("\n");
         }
@@ -428,7 +480,10 @@ impl PerformanceBenchmark {
         if !analysis.bottlenecks.is_empty() {
             report.push_str("## Identified Bottlenecks\n\n");
             for bottleneck in &analysis.bottlenecks {
-                report.push_str(&format!("### {} ({:?})\n", bottleneck.operation, bottleneck.severity));
+                report.push_str(&format!(
+                    "### {} ({:?})\n",
+                    bottleneck.operation, bottleneck.severity
+                ));
                 report.push_str(&format!("{}\n\n", bottleneck.description));
                 report.push_str("Suggestions:\n");
                 for suggestion in &bottleneck.suggestions {

@@ -457,6 +457,7 @@ jac unpack file.jac -o debug.ndjson --ndjson
 - ✅ CLI unit and integration coverage for ls/cat flows (`jac-cli/tests/cli.rs`)
 - ✅ Progress spinners for pack/unpack/cat/ls plus verbose stderr summaries
 - ✅ `--stats` flag delivering per-field null/absent/type breakdowns (`jac-cli/src/main.rs`, `jac-cli/tests/cli.rs`)
+- ✅ Container format hint recorded in header flags (bits 3–4) with CLI auto-selection of NDJSON vs JSON array on unpack.
 
 **Upcoming Focus (Phase 8 Week 3):**
 1. Evaluate further reuse opportunities for block decoding in `--stats` (avoid repeated decompression when fields share blocks)

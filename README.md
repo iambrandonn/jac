@@ -33,7 +33,12 @@ cargo install jac-cli
 jac pack input.ndjson -o output.jac --progress
 
 # Decompress JAC to NDJSON
-jac unpack output.jac -o decompressed.ndjson --ndjson --progress
+jac unpack output.jac -o decompressed.ndjson --progress
+
+# Defaults to the original wrapper (NDJSON vs JSON array) unless you pass --ndjson/--json-array.
+
+# Raise the per-segment ceiling (trusted data only)
+jac pack input.ndjson -o output.jac --max-segment-bytes 134217728 --allow-large-segments
 
 # List blocks and fields (table or JSON)
 jac ls output.jac
@@ -73,8 +78,8 @@ project(input, output, &["userId", "timestamp"], true)?;
 
 | Command | Purpose | Key Flags |
 |---------|---------|-----------|
-| `jac pack` | Compress NDJSON/JSON into `.jac` | `--block-records`, `--zstd-level`, `--ndjson`, `--json-array`, `--progress` |
-| `jac unpack` | Decompress `.jac` back to JSON | `--ndjson`, `--json-array`, `--progress` |
+| `jac pack` | Compress NDJSON/JSON into `.jac` | `--block-records`, `--zstd-level`, `--ndjson`, `--json-array`, `--max-segment-bytes`, `--allow-large-segments`, `--progress` |
+| `jac unpack` | Decompress `.jac` back to JSON (defaults follow stored wrapper) | `--ndjson`, `--json-array`, `--progress` |
 | `jac ls` | Inspect blocks and field statistics | `--format {table,json}`, `--verbose`, `--fields-only`, `--blocks-only` |
 | `jac ls --stats` | Opt-in deep field analysis (samples ≤50k values/field) | `--stats`, `--verbose`, `--stats-sample <N>` |
 | `jac cat` | Stream values for a field | `--field <name>`, `--format {ndjson,json-array,csv}`, `--blocks <range>`, `--progress` |
@@ -108,8 +113,10 @@ JAC targets:
 JAC enforces strict limits to prevent decompression bombs:
 - Maximum records per block: 1,000,000 (hard limit)
 - Maximum fields per block: 65,535 (hard limit)
-- Maximum segment size: 64 MiB (hard limit)
+- Maximum segment size: 64 MiB by default (hard guard unless the encoder opts in to a higher value)
 - Maximum string length: 16 MiB (hard limit)
+
+The encoder refuses to emit segments that exceed these ceilings. Advanced users may raise the segment ceiling during compression via `jac pack --max-segment-bytes <bytes> --allow-large-segments`; this warning-gated flag is intended for trusted data where larger segments are required. The effective limit is written into the file header metadata so that `jac` and library consumers enforce the same ceiling during decompression, while respecting any stricter limit explicitly supplied by the reader.
 
 ## Testing
 

@@ -1,7 +1,7 @@
 //! Property-based tests for JAC format primitives
 
-use jac_format::varint::{encode_uleb128, decode_uleb128, zigzag_encode, zigzag_decode};
 use jac_format::bitpack::{PresenceBitmap, TagPacker, TagUnpacker};
+use jac_format::varint::{decode_uleb128, encode_uleb128, zigzag_decode, zigzag_encode};
 use jac_format::TypeTag;
 use proptest::prelude::*;
 

@@ -10,43 +10,84 @@ pub fn create_test_registry() -> TestRegistry {
     let mut registry = TestRegistry::new();
 
     // Unit tests (fast, run in CI)
-    registry.register("test_endianness_compatibility".to_string(), TestMetadata::unit());
-    registry.register("test_version_compatibility".to_string(), TestMetadata::unit());
-    registry.register("test_type_tag_compatibility".to_string(), TestMetadata::unit());
-    registry.register("test_limits_compatibility".to_string(), TestMetadata::unit());
-    registry.register("test_file_header_cross_platform".to_string(), TestMetadata::unit());
-    registry.register("test_block_header_cross_platform".to_string(), TestMetadata::unit());
-    registry.register("test_compression_codec_compatibility".to_string(), TestMetadata::unit());
+    registry.register(
+        "test_endianness_compatibility".to_string(),
+        TestMetadata::unit(),
+    );
+    registry.register(
+        "test_version_compatibility".to_string(),
+        TestMetadata::unit(),
+    );
+    registry.register(
+        "test_type_tag_compatibility".to_string(),
+        TestMetadata::unit(),
+    );
+    registry.register(
+        "test_limits_compatibility".to_string(),
+        TestMetadata::unit(),
+    );
+    registry.register(
+        "test_file_header_cross_platform".to_string(),
+        TestMetadata::unit(),
+    );
+    registry.register(
+        "test_block_header_cross_platform".to_string(),
+        TestMetadata::unit(),
+    );
+    registry.register(
+        "test_compression_codec_compatibility".to_string(),
+        TestMetadata::unit(),
+    );
 
     // Integration tests (medium speed, run in CI)
-    registry.register("test_spec_conformance_cross_platform".to_string(), TestMetadata::integration());
-    registry.register("test_parallel_writers_basic".to_string(), TestMetadata::integration());
-    registry.register("test_parallel_readers_basic".to_string(), TestMetadata::integration());
-    registry.register("test_projection_concurrency".to_string(), TestMetadata::integration());
-    registry.register("test_deterministic_output".to_string(), TestMetadata::integration());
+    registry.register(
+        "test_spec_conformance_cross_platform".to_string(),
+        TestMetadata::integration(),
+    );
+    registry.register(
+        "test_parallel_writers_basic".to_string(),
+        TestMetadata::integration(),
+    );
+    registry.register(
+        "test_parallel_readers_basic".to_string(),
+        TestMetadata::integration(),
+    );
+    registry.register(
+        "test_projection_concurrency".to_string(),
+        TestMetadata::integration(),
+    );
+    registry.register(
+        "test_deterministic_output".to_string(),
+        TestMetadata::integration(),
+    );
 
     // Slow tests (skip in CI, run in nightly)
-    registry.register("million_record_roundtrip_and_projection".to_string(),
+    registry.register(
+        "million_record_roundtrip_and_projection".to_string(),
         TestMetadata::slow()
-            .with_description("Tests with 1 million records to verify multi-block handling".to_string())
+            .with_description(
+                "Tests with 1 million records to verify multi-block handling".to_string(),
+            )
             .with_duration(std::time::Duration::from_secs(30))
-            .with_memory_usage(500 * 1024 * 1024) // 500MB
+            .with_memory_usage(500 * 1024 * 1024), // 500MB
     );
 
     // Stress tests (high resource usage, skip in CI)
-    registry.register("test_high_contention".to_string(),
+    registry.register(
+        "test_high_contention".to_string(),
         TestMetadata::stress()
             .with_description("High-contention concurrency stress test with 8+ threads".to_string())
             .with_duration(std::time::Duration::from_secs(60))
-            .with_memory_usage(1024 * 1024 * 1024) // 1GB
+            .with_memory_usage(1024 * 1024 * 1024), // 1GB
     );
 
     // Performance tests (benchmark-like, skip in CI)
-    registry.register("test_large_synthetic_block".to_string(),
+    registry.register(
+        "test_large_synthetic_block".to_string(),
         TestMetadata::performance()
             .with_description("Tests with large synthetic blocks (>100k records)".to_string())
             .with_duration(std::time::Duration::from_secs(45))
-            .with_memory_usage(800 * 1024 * 1024) // 800MB
+            .with_memory_usage(800 * 1024 * 1024), // 800MB
     );
 
     // Hardware-specific tests (if any)
@@ -146,10 +187,23 @@ pub fn generate_execution_report() -> String {
 
     let mut report = String::new();
     report.push_str("# Test Execution Report\n\n");
-    report.push_str(&format!("Environment: {}\n", if std::env::var("CI").is_ok() { "CI" } else { "Local" }));
+    report.push_str(&format!(
+        "Environment: {}\n",
+        if std::env::var("CI").is_ok() {
+            "CI"
+        } else {
+            "Local"
+        }
+    ));
     report.push_str(&format!("Nightly: {}\n", std::env::var("NIGHTLY").is_ok()));
-    report.push_str(&format!("Stress Tests: {}\n", std::env::var("STRESS_TESTS").is_ok()));
-    report.push_str(&format!("Performance Tests: {}\n\n", std::env::var("PERFORMANCE_TESTS").is_ok()));
+    report.push_str(&format!(
+        "Stress Tests: {}\n",
+        std::env::var("STRESS_TESTS").is_ok()
+    ));
+    report.push_str(&format!(
+        "Performance Tests: {}\n\n",
+        std::env::var("PERFORMANCE_TESTS").is_ok()
+    ));
 
     for category in [
         TestCategory::Unit,
@@ -162,12 +216,17 @@ pub fn generate_execution_report() -> String {
     ] {
         let tests = registry.get_tests_in_category(category);
         if !tests.is_empty() {
-            let run_count = tests.iter()
+            let run_count = tests
+                .iter()
                 .filter(|(_, metadata)| config.should_run_test(metadata))
                 .count();
 
-            report.push_str(&format!("## {} Tests: {}/{} will run\n\n",
-                category.name(), run_count, tests.len()));
+            report.push_str(&format!(
+                "## {} Tests: {}/{} will run\n\n",
+                category.name(),
+                run_count,
+                tests.len()
+            ));
 
             if run_count < tests.len() {
                 report.push_str("Skipped tests:\n");
@@ -196,7 +255,9 @@ mod tests {
     fn test_registry_creation() {
         let registry = create_test_registry();
         assert!(registry.get("test_endianness_compatibility").is_some());
-        assert!(registry.get("million_record_roundtrip_and_projection").is_some());
+        assert!(registry
+            .get("million_record_roundtrip_and_projection")
+            .is_some());
     }
 
     #[test]

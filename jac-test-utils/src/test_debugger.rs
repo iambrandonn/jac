@@ -3,9 +3,9 @@
 //! This module provides tools for debugging test failures, analyzing
 //! test execution, and providing diagnostic information.
 
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 /// Test debugger for analyzing test failures and execution
@@ -108,11 +108,20 @@ impl TestDebugger {
             debug_info.execution_time = execution_time;
         }
 
-        self.log_event(test_name, EventType::TestEnd, format!("Test ended with status: {:?}", status));
+        self.log_event(
+            test_name,
+            EventType::TestEnd,
+            format!("Test ended with status: {:?}", status),
+        );
     }
 
     /// Record a test failure
-    pub fn record_failure(&mut self, test_name: String, error_message: String, stack_trace: Option<String>) {
+    pub fn record_failure(
+        &mut self,
+        test_name: String,
+        error_message: String,
+        stack_trace: Option<String>,
+    ) {
         let suggestions = self.generate_suggestions(&error_message);
 
         if let Some(debug_info) = self.debug_info.get_mut(&test_name) {
@@ -126,7 +135,13 @@ impl TestDebugger {
     }
 
     /// Record test data for debugging
-    pub fn record_test_data(&mut self, test_name: String, input_data: String, expected_output: String, actual_output: String) {
+    pub fn record_test_data(
+        &mut self,
+        test_name: String,
+        input_data: String,
+        expected_output: String,
+        actual_output: String,
+    ) {
         if let Some(debug_info) = self.debug_info.get_mut(&test_name) {
             debug_info.input_data = Some(input_data);
             debug_info.expected_output = Some(expected_output);
@@ -165,18 +180,28 @@ impl TestDebugger {
     pub fn generate_debug_report(&self) -> String {
         let mut report = String::new();
         report.push_str("# Test Debugging Report\n\n");
-        report.push_str(&format!("Generated on: {}\n\n", chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")));
+        report.push_str(&format!(
+            "Generated on: {}\n\n",
+            chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
+        ));
 
         // Summary
         let total_tests = self.debug_info.len();
-        let failed_tests = self.debug_info.values().filter(|info| matches!(info.status, TestStatus::Failed)).count();
+        let failed_tests = self
+            .debug_info
+            .values()
+            .filter(|info| matches!(info.status, TestStatus::Failed))
+            .count();
         let passed_tests = total_tests - failed_tests;
 
         report.push_str("## Summary\n\n");
         report.push_str(&format!("Total tests: {}\n", total_tests));
         report.push_str(&format!("Passed: {}\n", passed_tests));
         report.push_str(&format!("Failed: {}\n", failed_tests));
-        report.push_str(&format!("Success rate: {:.1}%\n\n", (passed_tests as f64 / total_tests as f64) * 100.0));
+        report.push_str(&format!(
+            "Success rate: {:.1}%\n\n",
+            (passed_tests as f64 / total_tests as f64) * 100.0
+        ));
 
         // Failed tests details
         if failed_tests > 0 {
@@ -185,7 +210,10 @@ impl TestDebugger {
                 if matches!(debug_info.status, TestStatus::Failed) {
                     report.push_str(&format!("### {}\n", test_name));
                     report.push_str(&format!("**Status:** {:?}\n", debug_info.status));
-                    report.push_str(&format!("**Execution time:** {:.2}ms\n", debug_info.execution_time.as_millis()));
+                    report.push_str(&format!(
+                        "**Execution time:** {:.2}ms\n",
+                        debug_info.execution_time.as_millis()
+                    ));
 
                     if let Some(ref error) = debug_info.error_message {
                         report.push_str(&format!("**Error:** {}\n", error));
@@ -222,10 +250,19 @@ impl TestDebugger {
         // Environment information
         if let Some(first_info) = self.debug_info.values().next() {
             report.push_str("## Environment Information\n\n");
-            report.push_str(&format!("Rust version: {}\n", first_info.environment_info.rust_version));
+            report.push_str(&format!(
+                "Rust version: {}\n",
+                first_info.environment_info.rust_version
+            ));
             report.push_str(&format!("OS: {}\n", first_info.environment_info.os));
-            report.push_str(&format!("Architecture: {}\n", first_info.environment_info.architecture));
-            report.push_str(&format!("Working directory: {}\n", first_info.environment_info.working_directory));
+            report.push_str(&format!(
+                "Architecture: {}\n",
+                first_info.environment_info.architecture
+            ));
+            report.push_str(&format!(
+                "Working directory: {}\n",
+                first_info.environment_info.working_directory
+            ));
             if let Some(memory) = first_info.environment_info.available_memory {
                 report.push_str(&format!("Available memory: {} MB\n", memory / 1024 / 1024));
             }
@@ -238,7 +275,8 @@ impl TestDebugger {
         // Execution timeline
         report.push_str("## Execution Timeline\n\n");
         for event in &self.execution_log {
-            report.push_str(&format!("[{}] {} - {}: {}\n",
+            report.push_str(&format!(
+                "[{}] {} - {}: {}\n",
                 event.timestamp.format("%H:%M:%S%.3f"),
                 event.test_name,
                 format!("{:?}", event.event_type),
@@ -257,7 +295,9 @@ impl TestDebugger {
     }
 
     /// Load debug information from file
-    pub fn load_debug_info(path: &PathBuf) -> Result<HashMap<String, DebugInfo>, Box<dyn std::error::Error>> {
+    pub fn load_debug_info(
+        path: &PathBuf,
+    ) -> Result<HashMap<String, DebugInfo>, Box<dyn std::error::Error>> {
         let data = std::fs::read_to_string(path)?;
         let debug_info: HashMap<String, DebugInfo> = serde_json::from_str(&data)?;
         Ok(debug_info)
@@ -271,7 +311,10 @@ impl TestDebugger {
             architecture: std::env::consts::ARCH.to_string(),
             available_memory: self.get_available_memory(),
             cpu_cores: Some(num_cpus::get() as u32),
-            working_directory: std::env::current_dir().unwrap_or_default().to_string_lossy().to_string(),
+            working_directory: std::env::current_dir()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string(),
         }
     }
 
@@ -291,7 +334,8 @@ impl TestDebugger {
             suggestions.push("Verify input data matches expected format".to_string());
             suggestions.push("Add debug output to understand the failure".to_string());
         } else if error_message.contains("timeout") {
-            suggestions.push("Check if the test is waiting for a condition that never occurs".to_string());
+            suggestions
+                .push("Check if the test is waiting for a condition that never occurs".to_string());
             suggestions.push("Consider increasing timeout limits if appropriate".to_string());
             suggestions.push("Look for potential deadlocks or infinite loops".to_string());
         } else if error_message.contains("memory") {
@@ -399,7 +443,8 @@ impl TestFailureAnalyzer {
             *error_counts.entry(&failure.error_type).or_insert(0) += 1;
         }
 
-        let most_common_error = error_counts.iter()
+        let most_common_error = error_counts
+            .iter()
             .max_by_key(|(_, count)| *count)
             .map(|(error_type, _)| error_type);
 
@@ -408,15 +453,15 @@ impl TestFailureAnalyzer {
                 "AssertionError" => {
                     recommendations.push("Review assertion logic and test data".to_string());
                     recommendations.push("Add more descriptive assertion messages".to_string());
-                },
+                }
                 "TimeoutError" => {
                     recommendations.push("Review timeout settings and test logic".to_string());
                     recommendations.push("Check for potential deadlocks".to_string());
-                },
+                }
                 "MemoryError" => {
                     recommendations.push("Implement memory monitoring in tests".to_string());
                     recommendations.push("Review test data size and cleanup".to_string());
-                },
+                }
                 _ => {
                     recommendations.push("Investigate the most common error type".to_string());
                 }
@@ -447,7 +492,11 @@ mod tests {
         let mut debugger = TestDebugger::new();
 
         debugger.start_test("test_example".to_string());
-        debugger.end_test("test_example".to_string(), TestStatus::Passed, Duration::from_millis(100));
+        debugger.end_test(
+            "test_example".to_string(),
+            TestStatus::Passed,
+            Duration::from_millis(100),
+        );
 
         let debug_info = debugger.get_debug_info("test_example");
         assert!(debug_info.is_some());
@@ -464,7 +513,11 @@ mod tests {
             "assertion failed".to_string(),
             Some("stack trace".to_string()),
         );
-        debugger.end_test("test_failing".to_string(), TestStatus::Failed, Duration::from_millis(50));
+        debugger.end_test(
+            "test_failing".to_string(),
+            TestStatus::Failed,
+            Duration::from_millis(50),
+        );
 
         let debug_info = debugger.get_debug_info("test_failing");
         assert!(debug_info.is_some());
@@ -500,6 +553,8 @@ mod tests {
         let report = analyzer.analyze_failures();
 
         assert_eq!(report.total_failures, 1);
-        assert!(report.error_type_distribution.contains_key("AssertionError"));
+        assert!(report
+            .error_type_distribution
+            .contains_key("AssertionError"));
     }
 }

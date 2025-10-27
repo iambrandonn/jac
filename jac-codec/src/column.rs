@@ -41,6 +41,20 @@ pub struct ColumnBuilder {
     max_dict_entries: usize,
     /// Canonicalize numbers flag
     canonicalize_numbers: bool,
+    /// Count of present (non-absent) values captured so far
+    present_count: usize,
+    /// Count of boolean values (for estimation)
+    bool_count: usize,
+    /// Estimated encoded bytes for integer substream (varint upper bound)
+    int_encoded_bytes: usize,
+    /// Estimated encoded bytes for decimal substream
+    decimal_encoded_bytes: usize,
+    /// Estimated encoded bytes for raw string values (dictionary upper bound)
+    string_raw_bytes: usize,
+    /// Estimated encoded bytes for object payloads
+    object_raw_bytes: usize,
+    /// Estimated encoded bytes for array payloads
+    array_raw_bytes: usize,
 }
 
 impl ColumnBuilder {
@@ -60,6 +74,13 @@ impl ColumnBuilder {
             limits: opts.limits.clone(),
             max_dict_entries: opts.max_dict_entries,
             canonicalize_numbers: opts.canonicalize_numbers,
+            present_count: 0,
+            bool_count: 0,
+            int_encoded_bytes: 0,
+            decimal_encoded_bytes: 0,
+            string_raw_bytes: 0,
+            object_raw_bytes: 0,
+            array_raw_bytes: 0,
         }
     }
 
@@ -74,12 +95,15 @@ impl ColumnBuilder {
                 self.presence.set_present(record_idx, true);
                 self.tags.push(TypeTag::Null);
                 self.present_idx += 1;
+                self.present_count += 1;
             }
             serde_json::Value::Bool(b) => {
                 self.presence.set_present(record_idx, true);
                 self.tags.push(TypeTag::Bool);
                 self.bools.push(*b);
                 self.present_idx += 1;
+                self.present_count += 1;
+                self.bool_count += 1;
             }
             serde_json::Value::Number(n) => {
                 self.presence.set_present(record_idx, true);
@@ -88,29 +112,36 @@ impl ColumnBuilder {
                 if let Some(i) = n.as_i64() {
                     self.tags.push(TypeTag::Int);
                     self.ints.push(i);
+                    self.int_encoded_bytes += uleb128_len(zigzag_encode(i));
                 } else if let Some(u) = n.as_u64() {
                     if u <= i64::MAX as u64 {
                         self.tags.push(TypeTag::Int);
                         self.ints.push(u as i64);
+                        self.int_encoded_bytes += uleb128_len(zigzag_encode(u as i64));
                     } else {
                         // u64 > i64::MAX, must use decimal
                         let decimal = self.build_decimal(&n.to_string())?;
                         self.tags.push(TypeTag::Decimal);
+                        self.decimal_encoded_bytes += decimal.encode()?.len();
                         self.decimals.push(decimal);
                     }
                 } else {
                     // f64 or non-integer, use decimal
                     let decimal = self.build_decimal(&n.to_string())?;
                     self.tags.push(TypeTag::Decimal);
+                    self.decimal_encoded_bytes += decimal.encode()?.len();
                     self.decimals.push(decimal);
                 }
                 self.present_idx += 1;
+                self.present_count += 1;
             }
             serde_json::Value::String(s) => {
                 self.presence.set_present(record_idx, true);
                 self.tags.push(TypeTag::String);
                 self.push_string(s)?;
                 self.present_idx += 1;
+                self.present_count += 1;
+                self.string_raw_bytes += string_payload_len(s.len());
             }
             serde_json::Value::Object(obj) => {
                 self.presence.set_present(record_idx, true);
@@ -118,9 +149,12 @@ impl ColumnBuilder {
                 // Minify JSON
                 let minified = serde_json::to_vec(obj)
                     .map_err(|e| JacError::Internal(format!("JSON serialization failed: {}", e)))?;
-                self.ensure_string_len(minified.len())?;
+                let len = minified.len();
+                self.ensure_string_len(len)?;
                 self.objects.push(minified);
                 self.present_idx += 1;
+                self.present_count += 1;
+                self.object_raw_bytes += string_payload_len(len);
             }
             serde_json::Value::Array(arr) => {
                 self.presence.set_present(record_idx, true);
@@ -128,13 +162,31 @@ impl ColumnBuilder {
                 // Minify JSON
                 let minified = serde_json::to_vec(arr)
                     .map_err(|e| JacError::Internal(format!("JSON serialization failed: {}", e)))?;
-                self.ensure_string_len(minified.len())?;
+                let len = minified.len();
+                self.ensure_string_len(len)?;
                 self.arrays.push(minified);
                 self.present_idx += 1;
+                self.present_count += 1;
+                self.array_raw_bytes += string_payload_len(len);
             }
         }
 
         Ok(())
+    }
+
+    /// Estimate current uncompressed payload size using conservative assumptions.
+    pub fn estimated_uncompressed_size(&self, record_count: usize) -> usize {
+        let presence_bytes = (record_count + 7) >> 3;
+        let tag_bytes = ((3 * self.present_count) + 7) >> 3;
+        let bool_bytes = ((self.bool_count) + 7) >> 3;
+        presence_bytes
+            + tag_bytes
+            + bool_bytes
+            + self.int_encoded_bytes
+            + self.decimal_encoded_bytes
+            + self.string_raw_bytes
+            + self.object_raw_bytes
+            + self.array_raw_bytes
     }
 
     /// Finalize column and create field segment
@@ -404,6 +456,139 @@ impl ColumnBuilder {
             decimal.exponent += 1;
         }
     }
+
+    /// Compute per-value contribution used for limit checks without mutating state.
+    pub fn contribution_for_value(&self, value: &serde_json::Value) -> Result<ColumnContribution> {
+        let mut contrib = ColumnContribution::default();
+
+        match value {
+            serde_json::Value::Null => {
+                contrib.present_delta = 1;
+            }
+            serde_json::Value::Bool(_) => {
+                contrib.present_delta = 1;
+                contrib.bool_delta = 1;
+            }
+            serde_json::Value::Number(n) => {
+                contrib.present_delta = 1;
+                if let Some(i) = n.as_i64() {
+                    contrib.int_encoded_bytes = uleb128_len(zigzag_encode(i));
+                } else if let Some(u) = n.as_u64() {
+                    if u <= i64::MAX as u64 {
+                        contrib.int_encoded_bytes = uleb128_len(zigzag_encode(u as i64));
+                    } else {
+                        let decimal = self.build_decimal(&n.to_string())?;
+                        contrib.decimal_encoded_bytes = decimal.encode()?.len();
+                    }
+                } else {
+                    let decimal = self.build_decimal(&n.to_string())?;
+                    contrib.decimal_encoded_bytes = decimal.encode()?.len();
+                }
+            }
+            serde_json::Value::String(s) => {
+                self.ensure_string_len(s.len())?;
+                contrib.present_delta = 1;
+                contrib.string_raw_bytes = string_payload_len(s.len());
+            }
+            serde_json::Value::Object(obj) => {
+                let minified = serde_json::to_vec(obj)
+                    .map_err(|e| JacError::Internal(format!("JSON serialization failed: {}", e)))?;
+                self.ensure_string_len(minified.len())?;
+                contrib.present_delta = 1;
+                contrib.object_raw_bytes = string_payload_len(minified.len());
+            }
+            serde_json::Value::Array(arr) => {
+                let minified = serde_json::to_vec(arr)
+                    .map_err(|e| JacError::Internal(format!("JSON serialization failed: {}", e)))?;
+                self.ensure_string_len(minified.len())?;
+                contrib.present_delta = 1;
+                contrib.array_raw_bytes = string_payload_len(minified.len());
+            }
+        }
+
+        Ok(contrib)
+    }
+
+    /// Estimate uncompressed size after applying a contribution, for limit checks.
+    pub fn estimated_uncompressed_size_with(
+        &self,
+        contrib: &ColumnContribution,
+        next_record_count: usize,
+    ) -> usize {
+        let presence_bytes = (next_record_count + 7) >> 3;
+        let tag_bytes = ((3 * (self.present_count + contrib.present_delta)) + 7) >> 3;
+        let bool_bytes = ((self.bool_count + contrib.bool_delta) + 7) >> 3;
+        presence_bytes
+            + tag_bytes
+            + bool_bytes
+            + self.int_encoded_bytes
+            + contrib.int_encoded_bytes
+            + self.decimal_encoded_bytes
+            + contrib.decimal_encoded_bytes
+            + self.string_raw_bytes
+            + contrib.string_raw_bytes
+            + self.object_raw_bytes
+            + contrib.object_raw_bytes
+            + self.array_raw_bytes
+            + contrib.array_raw_bytes
+    }
+
+    /// Upper-bound the segment size for a single record containing this value.
+    pub fn estimated_single_value_upper_bound(&self, value: &serde_json::Value) -> Result<usize> {
+        let contrib = self.contribution_for_value(value)?;
+        if contrib.present_delta == 0 {
+            return Ok(0);
+        }
+
+        let presence_bytes = 1; // ceil(1 / 8)
+        let tag_bytes = 1; // ceil(3 bits / 8)
+        let bool_bytes = if contrib.bool_delta > 0 {
+            ((contrib.bool_delta) + 7) >> 3
+        } else {
+            0
+        };
+
+        Ok(presence_bytes
+            + tag_bytes
+            + bool_bytes
+            + contrib.int_encoded_bytes
+            + contrib.decimal_encoded_bytes
+            + contrib.string_raw_bytes
+            + contrib.object_raw_bytes
+            + contrib.array_raw_bytes)
+    }
+}
+
+/// Contribution summary for non-mutating size estimation.
+#[derive(Debug, Default, Clone)]
+pub struct ColumnContribution {
+    /// Additional present values contributed by the candidate record.
+    pub present_delta: usize,
+    /// Additional boolean values contributed by the candidate record.
+    pub bool_delta: usize,
+    /// Additional encoded integer bytes contributed by the candidate record.
+    pub int_encoded_bytes: usize,
+    /// Additional encoded decimal bytes contributed by the candidate record.
+    pub decimal_encoded_bytes: usize,
+    /// Additional raw string bytes (varint length + payload) contributed by the candidate record.
+    pub string_raw_bytes: usize,
+    /// Additional raw object bytes contributed by the candidate record.
+    pub object_raw_bytes: usize,
+    /// Additional raw array bytes contributed by the candidate record.
+    pub array_raw_bytes: usize,
+}
+
+fn uleb128_len(mut value: u64) -> usize {
+    let mut count = 1;
+    while value >= 0x80 {
+        value >>= 7;
+        count += 1;
+    }
+    count
+}
+
+fn string_payload_len(byte_len: usize) -> usize {
+    uleb128_len(byte_len as u64) + byte_len
 }
 
 /// Field segment containing encoded data

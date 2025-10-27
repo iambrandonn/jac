@@ -1,10 +1,9 @@
-use jac_io::{
-    execute_compress, execute_decompress, execute_project,
-    CompressRequest, DecompressRequest, ProjectRequest,
-    CompressOptions, DecompressOptions, InputSource, OutputSink, JacInput,
-    DecompressFormat, ProjectFormat
-};
 use jac_format::Limits;
+use jac_io::{
+    execute_compress, execute_decompress, execute_project, CompressOptions, CompressRequest,
+    ContainerFormat, DecompressFormat, DecompressOptions, DecompressRequest, InputSource, JacInput,
+    OutputSink, ProjectFormat, ProjectRequest,
+};
 use serde_json::{Map, Value};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -32,17 +31,29 @@ impl TestDataGenerator {
             let mut record = Map::new();
 
             // Add timestamp field (monotonic for delta encoding)
-            record.insert("ts".to_string(), Value::Number((1234567890 + i as i64).into()));
+            record.insert(
+                "ts".to_string(),
+                Value::Number((1234567890 + i as i64).into()),
+            );
 
             // Add level field (dictionary encoding)
             let levels = ["debug", "info", "warn", "error"];
-            record.insert("level".to_string(), Value::String(levels[i % levels.len()].to_string()));
+            record.insert(
+                "level".to_string(),
+                Value::String(levels[i % levels.len()].to_string()),
+            );
 
             // Add user field (dictionary encoding)
-            record.insert("user".to_string(), Value::String(format!("user_{}", i % 100)));
+            record.insert(
+                "user".to_string(),
+                Value::String(format!("user_{}", i % 100)),
+            );
 
             // Add message field (raw string)
-            record.insert("message".to_string(), Value::String(format!("Message number {} with some content", i)));
+            record.insert(
+                "message".to_string(),
+                Value::String(format!("Message number {} with some content", i)),
+            );
 
             // Add additional fields based on field_count
             for j in 0..self.field_count {
@@ -111,10 +122,7 @@ struct ConcurrencyStressTest {
 
 impl ConcurrencyStressTest {
     fn new(config: ConcurrencyTestConfig) -> Self {
-        let data_generator = TestDataGenerator::new(
-            config.records_per_writer,
-            config.field_count,
-        );
+        let data_generator = TestDataGenerator::new(config.records_per_writer, config.field_count);
 
         Self {
             config,
@@ -134,10 +142,8 @@ impl ConcurrencyStressTest {
             let temp_dir = temp_dir.path().to_path_buf();
             let results = Arc::clone(&results);
             let config = self.config.clone();
-            let data_generator = TestDataGenerator::new(
-                config.records_per_writer,
-                config.field_count,
-            );
+            let data_generator =
+                TestDataGenerator::new(config.records_per_writer, config.field_count);
 
             let handle = thread::spawn(move || {
                 let output_path = temp_dir.join(format!("output_{}.jac", thread_id));
@@ -158,6 +164,7 @@ impl ConcurrencyStressTest {
                     input: InputSource::Iterator(Box::new(records.into_iter())),
                     output: OutputSink::Path(output_path.clone()),
                     options,
+                    container_hint: Some(ContainerFormat::Ndjson),
                     emit_index: true,
                 };
 
@@ -208,7 +215,10 @@ impl ConcurrencyStressTest {
     }
 
     /// Run parallel reader test
-    fn test_parallel_readers(&self, input_files: Vec<std::path::PathBuf>) -> Result<ConcurrencyTestResult, Box<dyn std::error::Error>> {
+    fn test_parallel_readers(
+        &self,
+        input_files: Vec<std::path::PathBuf>,
+    ) -> Result<ConcurrencyTestResult, Box<dyn std::error::Error>> {
         let mut handles = Vec::new();
         let results = Arc::new(Mutex::new(Vec::new()));
 
@@ -277,10 +287,18 @@ impl ConcurrencyStressTest {
     }
 
     /// Run projection concurrency test
-    fn test_projection_concurrency(&self, input_file: std::path::PathBuf) -> Result<ConcurrencyTestResult, Box<dyn std::error::Error>> {
+    fn test_projection_concurrency(
+        &self,
+        input_file: std::path::PathBuf,
+    ) -> Result<ConcurrencyTestResult, Box<dyn std::error::Error>> {
         let mut handles = Vec::new();
         let results = Arc::new(Mutex::new(Vec::new()));
-        let fields = vec!["ts".to_string(), "level".to_string(), "user".to_string(), "message".to_string()];
+        let fields = vec![
+            "ts".to_string(),
+            "level".to_string(),
+            "user".to_string(),
+            "message".to_string(),
+        ];
 
         // Spawn projection threads
         for thread_id in 0..self.config.reader_threads {
@@ -352,7 +370,11 @@ impl ConcurrencyStressTest {
         let mut total_duration = Duration::new(0, 0);
 
         for (thread_id, errors, duration) in results.iter() {
-            all_errors.extend(errors.iter().map(|e| format!("Thread {}: {}", thread_id, e)));
+            all_errors.extend(
+                errors
+                    .iter()
+                    .map(|e| format!("Thread {}: {}", thread_id, e)),
+            );
             total_duration += *duration;
         }
 
@@ -389,10 +411,23 @@ mod tests {
         let test = ConcurrencyStressTest::new(config);
         let result = test.test_parallel_writers().unwrap();
 
-        assert!(result.deterministic, "Parallel writers should be deterministic");
-        assert!(result.errors.is_empty(), "No errors expected: {:?}", result.errors);
-        assert!(result.total_records_written > 0, "Should have written records");
-        assert!(result.write_throughput > 0.0, "Should have positive throughput");
+        assert!(
+            result.deterministic,
+            "Parallel writers should be deterministic"
+        );
+        assert!(
+            result.errors.is_empty(),
+            "No errors expected: {:?}",
+            result.errors
+        );
+        assert!(
+            result.total_records_written > 0,
+            "Should have written records"
+        );
+        assert!(
+            result.write_throughput > 0.0,
+            "Should have positive throughput"
+        );
     }
 
     #[test]
@@ -418,6 +453,7 @@ mod tests {
             input: InputSource::Iterator(Box::new(records.into_iter())),
             output: OutputSink::Path(test_file.clone()),
             options,
+            container_hint: Some(ContainerFormat::Ndjson),
             emit_index: true,
         };
 
@@ -436,8 +472,15 @@ mod tests {
         let test = ConcurrencyStressTest::new(config);
         let result = test.test_parallel_readers(vec![test_file]).unwrap();
 
-        assert!(result.deterministic, "Parallel readers should be deterministic");
-        assert!(result.errors.is_empty(), "No errors expected: {:?}", result.errors);
+        assert!(
+            result.deterministic,
+            "Parallel readers should be deterministic"
+        );
+        assert!(
+            result.errors.is_empty(),
+            "No errors expected: {:?}",
+            result.errors
+        );
     }
 
     #[test]
@@ -463,6 +506,7 @@ mod tests {
             input: InputSource::Iterator(Box::new(records.into_iter())),
             output: OutputSink::Path(test_file.clone()),
             options,
+            container_hint: Some(ContainerFormat::Ndjson),
             emit_index: true,
         };
 
@@ -481,8 +525,15 @@ mod tests {
         let test = ConcurrencyStressTest::new(config);
         let result = test.test_projection_concurrency(test_file).unwrap();
 
-        assert!(result.deterministic, "Projection concurrency should be deterministic");
-        assert!(result.errors.is_empty(), "No errors expected: {:?}", result.errors);
+        assert!(
+            result.deterministic,
+            "Projection concurrency should be deterministic"
+        );
+        assert!(
+            result.errors.is_empty(),
+            "No errors expected: {:?}",
+            result.errors
+        );
     }
 
     #[test]
@@ -525,7 +576,14 @@ mod tests {
         let test = ConcurrencyStressTest::new(config);
         let result = test.test_parallel_writers().unwrap();
 
-        assert!(result.deterministic, "High contention should still be deterministic");
-        assert!(result.errors.is_empty(), "No errors expected under high contention: {:?}", result.errors);
+        assert!(
+            result.deterministic,
+            "High contention should still be deterministic"
+        );
+        assert!(
+            result.errors.is_empty(),
+            "No errors expected under high contention: {:?}",
+            result.errors
+        );
     }
 }

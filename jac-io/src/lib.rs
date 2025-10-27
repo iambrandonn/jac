@@ -16,18 +16,46 @@ pub mod writer;
 
 // Re-export commonly used types
 pub use jac_codec::{Codec, CompressOpts, DecompressOpts};
-pub use jac_format::{FileHeader, JacError, Limits, Result, TypeTag};
+pub use jac_format::{ContainerFormat, FileHeader, JacError, Limits, Result, TypeTag};
 use reader::BlockCursor;
 pub use reader::{
     BlockHandle, FieldIterator, JacReader, ProjectionStream, RecordStream as ReaderRecordStream,
 };
 pub use writer::{JacWriter, WriterFinish, WriterMetrics};
 
-use serde::Deserialize;
-use serde_json::{Map, Value};
+use serde::{Deserialize, Serialize};
+use serde_json::{Deserializer, Map, Value};
+use std::convert::TryFrom;
 use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Read, Seek, Write};
 use std::path::PathBuf;
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct HeaderMetadata {
+    #[serde(default)]
+    segment_max_bytes: Option<u64>,
+}
+
+pub(crate) fn encode_header_metadata(limits: &Limits) -> Result<Vec<u8>> {
+    let default_limit = Limits::default().max_segment_uncompressed_len as u64;
+    let current_limit = limits.max_segment_uncompressed_len as u64;
+    if current_limit == default_limit {
+        return Ok(Vec::new());
+    }
+    let metadata = HeaderMetadata {
+        segment_max_bytes: Some(current_limit),
+    };
+    serde_json::to_vec(&metadata).map_err(JacError::from)
+}
+
+pub(crate) fn decode_segment_limit(metadata: &[u8]) -> Option<usize> {
+    if metadata.is_empty() {
+        return None;
+    }
+    let parsed: HeaderMetadata = serde_json::from_slice(metadata).ok()?;
+    let value = parsed.segment_max_bytes?;
+    usize::try_from(value).ok()
+}
 
 /// Convenience alias for trait objects that need `Read + Seek + Send` bounds.
 pub trait ReadSeekSend: Read + Seek + Send {}
@@ -121,6 +149,8 @@ pub enum JacInput {
 /// Output formats for full decompression.
 #[derive(Debug, Clone, Copy)]
 pub enum DecompressFormat {
+    /// Follow the container hint stored in the file header (default to NDJSON).
+    Auto,
     /// Emit NDJSON (one object per line).
     Ndjson,
     /// Emit a JSON array (`[ {...}, {...} ]`).
@@ -149,6 +179,8 @@ pub struct CompressRequest {
     pub output: OutputSink,
     /// Compression options.
     pub options: CompressOptions,
+    /// Optional container format hint supplied by the caller.
+    pub container_hint: Option<ContainerFormat>,
     /// Emit index footer/pointer when finishing.
     pub emit_index: bool,
 }
@@ -159,6 +191,7 @@ impl Default for CompressRequest {
             input: InputSource::Iterator(Box::new(std::iter::empty())),
             output: OutputSink::Writer(Box::new(Vec::new())),
             options: CompressOptions::default(),
+            container_hint: None,
             emit_index: true,
         }
     }
@@ -219,10 +252,13 @@ pub fn execute_compress(request: CompressRequest) -> Result<CompressSummary> {
         input,
         output,
         options,
+        container_hint,
         emit_index,
     } = request;
 
     let stream = input.into_record_stream()?;
+    let detected_hint = stream.container_format();
+    let final_hint = container_hint.unwrap_or(detected_hint);
     let writer_target = output.into_writer()?;
     let buf_writer = BufWriter::new(writer_target);
 
@@ -237,13 +273,14 @@ pub fn execute_compress(request: CompressRequest) -> Result<CompressSummary> {
         flags |= jac_format::constants::FLAG_NESTED_OPAQUE;
     }
 
-    let header = FileHeader {
+    let mut header = FileHeader {
         flags,
         default_compressor: options.default_codec.compressor_id(),
         default_compression_level: options.default_codec.level(),
         block_size_hint_records: options.block_target_records,
-        user_metadata: Vec::new(),
+        user_metadata: encode_header_metadata(&options.limits)?,
     };
+    header.set_container_format_hint(final_hint);
 
     let codec_opts = CompressOpts {
         block_target_records: options.block_target_records,
@@ -292,6 +329,14 @@ pub fn execute_decompress(request: DecompressRequest) -> Result<DecompressSummar
         verify_checksums: options.verify_checksums,
     };
     let mut reader = JacReader::new(reader_source, codec_opts)?;
+    let header_hint = reader.file_header().container_format_hint()?;
+    let resolved_format = match format {
+        DecompressFormat::Auto => match header_hint {
+            ContainerFormat::JsonArray => DecompressFormat::JsonArray,
+            _ => DecompressFormat::Ndjson,
+        },
+        other => other,
+    };
 
     let mut buf_writer = BufWriter::new(output.into_writer()?);
     let mut record_stream = reader.record_stream()?;
@@ -300,7 +345,7 @@ pub fn execute_decompress(request: DecompressRequest) -> Result<DecompressSummar
         blocks_processed: 0,
     };
 
-    match format {
+    match resolved_format {
         DecompressFormat::Ndjson => {
             for record in record_stream.by_ref() {
                 let record = record?;
@@ -324,6 +369,7 @@ pub fn execute_decompress(request: DecompressRequest) -> Result<DecompressSummar
             }
             buf_writer.write_all(b"]")?;
         }
+        DecompressFormat::Auto => unreachable!("auto must resolve to a concrete format"),
     }
 
     summary.blocks_processed = record_stream.blocks_processed();
@@ -455,6 +501,7 @@ where
         input: InputSource::NdjsonReader(Box::new(input)),
         output: OutputSink::Writer(Box::new(output)),
         options: opts,
+        container_hint: Some(ContainerFormat::Ndjson),
         emit_index: true,
     };
     execute_compress(request).map(|_| ())
@@ -584,6 +631,7 @@ fn csv_cell_value(value: &Value) -> String {
 /// Record stream used during compression.
 struct RecordStream {
     inner: RecordStreamInner,
+    format: ContainerFormat,
 }
 
 enum RecordStreamInner {
@@ -599,6 +647,7 @@ impl RecordStream {
                 reader: Box::new(reader),
                 buffer: String::new(),
             }),
+            format: ContainerFormat::Ndjson,
         }
     }
 
@@ -606,13 +655,19 @@ impl RecordStream {
         let stream = JsonArrayStream::from_reader(Box::new(reader))?;
         Ok(Self {
             inner: RecordStreamInner::JsonArray(stream),
+            format: ContainerFormat::JsonArray,
         })
     }
 
     fn iter(iter: Box<dyn Iterator<Item = Map<String, Value>> + Send>) -> Self {
         Self {
             inner: RecordStreamInner::Iterator(iter),
+            format: ContainerFormat::Unknown,
         }
+    }
+
+    fn container_format(&self) -> ContainerFormat {
+        self.format
     }
 }
 
@@ -664,118 +719,136 @@ impl Iterator for NdjsonStream {
 
 struct JsonArrayStream {
     reader: Box<dyn BufRead + Send>,
+    mode: JsonArrayMode,
     finished: bool,
+    array_expect_value: bool,
+    emitted_any: bool,
+    consumed_single_object: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum JsonArrayMode {
+    Array,
+    SingleObject,
 }
 
 impl JsonArrayStream {
     fn from_reader(reader: Box<dyn BufRead + Send>) -> Result<Self> {
         let mut stream = Self {
             reader,
+            mode: JsonArrayMode::Array,
             finished: false,
+            array_expect_value: true,
+            emitted_any: false,
+            consumed_single_object: false,
         };
-        stream.consume_array_start()?;
+        stream.consume_bom()?;
+        stream.initialize_mode()?;
         Ok(stream)
     }
 
-    fn consume_array_start(&mut self) -> Result<()> {
-        self.skip_whitespace()?;
-        match self.read_byte()? {
-            Some(b'[') => Ok(()),
+    fn consume_bom(&mut self) -> Result<()> {
+        let buf = self.reader.fill_buf()?;
+        if buf.starts_with(&[0xEF, 0xBB, 0xBF]) {
+            self.reader.consume(3);
+        }
+        Ok(())
+    }
+
+    fn initialize_mode(&mut self) -> Result<()> {
+        let first = self.peek_non_whitespace()?;
+        match first {
+            Some(b'[') => {
+                self.reader.consume(1);
+                self.mode = JsonArrayMode::Array;
+                self.finished = false;
+                self.array_expect_value = true;
+                self.emitted_any = false;
+                Ok(())
+            }
+            Some(b'{') => {
+                self.mode = JsonArrayMode::SingleObject;
+                self.finished = false;
+                self.consumed_single_object = false;
+                self.array_expect_value = false;
+                self.emitted_any = false;
+                Ok(())
+            }
             Some(_) => Err(JacError::TypeMismatch),
             None => Err(JacError::UnexpectedEof),
         }
     }
 
-    fn skip_whitespace(&mut self) -> Result<()> {
+    fn peek_non_whitespace(&mut self) -> Result<Option<u8>> {
         loop {
-            let buf = self.reader.fill_buf()?;
-            if buf.is_empty() {
-                return Ok(());
-            }
-            let mut consumed = 0;
-            while consumed < buf.len() && buf[consumed].is_ascii_whitespace() {
-                consumed += 1;
-            }
-            let has_more = consumed < buf.len();
+            let (consumed, next_byte) = {
+                let buf = self.reader.fill_buf()?;
+                if buf.is_empty() {
+                    return Ok(None);
+                }
+
+                let mut idx = 0;
+                while idx < buf.len() && buf[idx].is_ascii_whitespace() {
+                    idx += 1;
+                }
+
+                if idx < buf.len() {
+                    (idx, Some(buf[idx]))
+                } else {
+                    (idx, None)
+                }
+            };
+
             if consumed > 0 {
                 self.reader.consume(consumed);
             }
-            if has_more {
-                return Ok(());
+
+            if let Some(byte) = next_byte {
+                return Ok(Some(byte));
             }
         }
     }
 
-    fn peek_byte(&mut self) -> Result<Option<u8>> {
-        let buf = self.reader.fill_buf()?;
-        if buf.is_empty() {
-            return Ok(None);
-        }
-        Ok(Some(buf[0]))
+    fn parse_object(&mut self) -> Result<Map<String, Value>> {
+        let mut de = Deserializer::from_reader(&mut self.reader);
+        Map::<String, Value>::deserialize(&mut de).map_err(JacError::from)
     }
 
-    fn read_byte(&mut self) -> Result<Option<u8>> {
-        let buf = self.reader.fill_buf()?;
-        if buf.is_empty() {
-            return Ok(None);
-        }
-        let byte = buf[0];
-        self.reader.consume(1);
-        Ok(Some(byte))
-    }
-
-    fn read_next_map(&mut self) -> Result<Option<Map<String, Value>>> {
-        self.skip_whitespace()?;
-        match self.peek_byte()? {
-            Some(b']') => {
-                self.read_byte()?; // consume closing bracket
-                self.finished = true;
-                self.skip_whitespace()?;
-                Ok(None)
-            }
-            Some(_) => {
-                let map = self.read_map_value()?;
-                Ok(Some(map))
-            }
-            None => Err(JacError::UnexpectedEof),
-        }
-    }
-
-    fn read_map_value(&mut self) -> Result<Map<String, Value>> {
-        let mut buf = Vec::new();
+    fn next_from_array(&mut self) -> Result<Option<Map<String, Value>>> {
         loop {
-            let byte = self.read_byte()?.ok_or_else(|| JacError::UnexpectedEof)?;
-            buf.push(byte);
+            let next = match self.peek_non_whitespace()? {
+                Some(byte) => byte,
+                None => return Err(JacError::UnexpectedEof),
+            };
 
-            let mut de = serde_json::Deserializer::from_slice(&buf);
-            match Map::<String, Value>::deserialize(&mut de) {
-                Ok(map) => {
-                    if let Err(err) = de.end() {
-                        if matches!(err.classify(), serde_json::error::Category::Eof) {
-                            continue;
-                        }
-                        return Err(JacError::from(err));
+            if self.array_expect_value {
+                if next == b']' {
+                    if self.emitted_any {
+                        return Err(JacError::TypeMismatch);
                     }
-
-                    self.skip_whitespace()?;
-                    match self.peek_byte()? {
-                        Some(b',') => {
-                            self.read_byte()?; // consume comma
-                        }
-                        Some(b']') => {
-                            self.read_byte()?; // consume closing bracket
-                            self.finished = true;
-                            self.skip_whitespace()?;
-                        }
-                        Some(_) => return Err(JacError::TypeMismatch),
-                        None => return Err(JacError::UnexpectedEof),
-                    }
-                    return Ok(map);
+                    self.reader.consume(1);
+                    self.finished = true;
+                    return Ok(None);
                 }
-                Err(err) => match err.classify() {
-                    serde_json::error::Category::Eof => continue,
-                    _ => return Err(JacError::from(err)),
-                },
+
+                let map = self.parse_object()?;
+                self.array_expect_value = false;
+                self.emitted_any = true;
+                return Ok(Some(map));
+            } else {
+                match next {
+                    b',' => {
+                        self.reader.consume(1);
+                        self.array_expect_value = true;
+                        continue;
+                    }
+                    b']' => {
+                        self.reader.consume(1);
+                        self.finished = true;
+                        return Ok(None);
+                    }
+                    _ => return Err(JacError::TypeMismatch),
+                }
             }
         }
     }
@@ -788,17 +861,42 @@ impl Iterator for JsonArrayStream {
         if self.finished {
             return None;
         }
-        match self.read_next_map() {
-            Ok(Some(map)) => Some(Ok(map)),
-            Ok(None) => None,
-            Err(err) => {
+
+        let outcome = match self.mode {
+            JsonArrayMode::SingleObject => {
+                if self.consumed_single_object {
+                    self.finished = true;
+                    return None;
+                }
+                Some(match self.parse_object() {
+                    Ok(map) => {
+                        self.consumed_single_object = true;
+                        self.finished = true;
+                        Ok(map)
+                    }
+                    Err(err) => Err(err),
+                })
+            }
+            JsonArrayMode::Array => match self.next_from_array() {
+                Ok(Some(map)) => Some(Ok(map)),
+                Ok(None) => {
+                    self.finished = true;
+                    return None;
+                }
+                Err(err) => Some(Err(err)),
+            },
+        };
+
+        match outcome {
+            Some(Ok(map)) => Some(Ok(map)),
+            Some(Err(err)) => {
                 self.finished = true;
                 Some(Err(err))
             }
+            None => None,
         }
     }
 }
-
 impl JacReader<File> {
     /// Convenience helper to create a reader from a file path.
     pub fn open(path: impl Into<PathBuf>, opts: DecompressOpts) -> Result<Self> {
@@ -842,11 +940,12 @@ pub mod async_io {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+    use serde_json::{json, Map, Value};
     use std::fs;
     use std::io::Cursor;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
+    use tempfile::tempdir;
 
     #[test]
     fn ndjson_input_streams_records() {
@@ -906,6 +1005,7 @@ mod tests {
             input: InputSource::NdjsonPath(paths.input_ndjson.clone()),
             output: OutputSink::Path(paths.output_jac.clone()),
             options: CompressOptions::default(),
+            container_hint: None,
             emit_index: true,
         };
 
@@ -914,7 +1014,7 @@ mod tests {
         let decompress_request = DecompressRequest {
             input: JacInput::Path(paths.output_jac.clone()),
             output: OutputSink::Path(paths.output_json.clone()),
-            format: DecompressFormat::Ndjson,
+            format: DecompressFormat::Auto,
             options: DecompressOptions::default(),
         };
 
@@ -935,6 +1035,7 @@ mod tests {
             input: InputSource::NdjsonPath(paths.input_ndjson.clone()),
             output: OutputSink::Path(paths.output_jac.clone()),
             options: CompressOptions::default(),
+            container_hint: None,
             emit_index: true,
         };
         execute_compress(compress_request).unwrap();
@@ -974,6 +1075,154 @@ mod tests {
         let _ = fs::remove_file(&projection_csv);
     }
 
+    #[test]
+    fn compress_json_array_and_auto_decompress_to_array() {
+        let dir = tempdir().unwrap();
+        let input_path = dir.path().join("input.json");
+        let jac_path = dir.path().join("output.jac");
+        let output_path = dir.path().join("decoded.json");
+
+        fs::write(&input_path, r#"[{"name":"alice"},{"name":"bob"}]"#).unwrap();
+
+        let compress_request = CompressRequest {
+            input: InputSource::JsonArrayPath(input_path.clone()),
+            output: OutputSink::Path(jac_path.clone()),
+            options: CompressOptions::default(),
+            container_hint: Some(ContainerFormat::JsonArray),
+            emit_index: true,
+        };
+        execute_compress(compress_request).unwrap();
+
+        let decompress_request = DecompressRequest {
+            input: JacInput::Path(jac_path.clone()),
+            output: OutputSink::Path(output_path.clone()),
+            format: DecompressFormat::Auto,
+            options: DecompressOptions::default(),
+        };
+        execute_decompress(decompress_request).unwrap();
+
+        let decoded = fs::read_to_string(&output_path).unwrap();
+        let value: Value = serde_json::from_str(&decoded).unwrap();
+        assert!(value.is_array());
+        assert_eq!(value.as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn compress_summary_reports_segment_limit_metrics() {
+        let mut options = CompressOptions::default();
+        options.block_target_records = 10;
+        options.default_codec = Codec::None;
+        options.limits.max_segment_uncompressed_len = 70;
+
+        let make_record = |payload: &str| -> Map<String, Value> {
+            let mut map = Map::new();
+            map.insert("field".to_string(), Value::String(payload.to_string()));
+            map
+        };
+
+        let records = vec![make_record(&"x".repeat(40)), make_record(&"y".repeat(40))];
+
+        let request = CompressRequest {
+            input: InputSource::Iterator(Box::new(records.into_iter())),
+            output: OutputSink::Writer(Box::new(Vec::new())),
+            options,
+            container_hint: Some(ContainerFormat::Ndjson),
+            emit_index: false,
+        };
+
+        let summary = execute_compress(request).expect("compress succeeds");
+
+        assert_eq!(summary.metrics.segment_limit_record_rejections, 0);
+        assert_eq!(summary.metrics.segment_limit_flushes, 1);
+        assert_eq!(summary.metrics.blocks_written, 2);
+    }
+
+    #[test]
+    fn jac_reader_applies_header_segment_limit() {
+        use std::io::Cursor;
+
+        let mut options = CompressOptions::default();
+        options.default_codec = Codec::None;
+        options.limits.max_segment_uncompressed_len = 128;
+
+        let mut header = FileHeader {
+            flags: 0,
+            default_compressor: options.default_codec.compressor_id(),
+            default_compression_level: options.default_codec.level(),
+            block_size_hint_records: options.block_target_records,
+            user_metadata: encode_header_metadata(&options.limits).unwrap(),
+        };
+        header.set_container_format_hint(ContainerFormat::Ndjson);
+
+        let codec_opts = CompressOpts {
+            block_target_records: options.block_target_records,
+            default_codec: options.default_codec,
+            canonicalize_keys: options.canonicalize_keys,
+            canonicalize_numbers: options.canonicalize_numbers,
+            nested_opaque: options.nested_opaque,
+            max_dict_entries: options.max_dict_entries,
+            limits: options.limits,
+        };
+
+        let mut writer = JacWriter::new(Vec::new(), header, codec_opts).unwrap();
+        let mut record = Map::new();
+        record.insert("value".to_string(), Value::from(1));
+        writer.write_record(&record).unwrap();
+        let WriterFinish { writer: bytes, .. } = writer.finish_without_index().unwrap();
+
+        let reader = JacReader::new(Cursor::new(bytes.clone()), DecompressOpts::default()).unwrap();
+        assert_eq!(reader.limits().max_segment_uncompressed_len, 128);
+
+        let mut custom_opts = DecompressOpts::default();
+        custom_opts.limits.max_segment_uncompressed_len = 32;
+        let reader_custom = JacReader::new(Cursor::new(bytes), custom_opts).unwrap();
+        assert_eq!(reader_custom.limits().max_segment_uncompressed_len, 32);
+    }
+
+    #[test]
+    fn json_array_nested_input_roundtrip_preserves_nested_objects() {
+        let dir = tempdir().unwrap();
+        let input_path = dir.path().join("nested.json");
+        let jac_path = dir.path().join("nested.jac");
+        let output_path = dir.path().join("nested_out.json");
+
+        let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../testdata/json_array_nested_repro.json");
+        let fixture = fs::read_to_string(&fixture_path).unwrap_or_else(|err| {
+            panic!("failed to read fixture {}: {err}", fixture_path.display())
+        });
+
+        fs::write(&input_path, &fixture).unwrap();
+
+        let compress_request = CompressRequest {
+            input: InputSource::JsonArrayPath(input_path.clone()),
+            output: OutputSink::Path(jac_path.clone()),
+            options: CompressOptions::default(),
+            container_hint: Some(ContainerFormat::JsonArray),
+            emit_index: true,
+        };
+        execute_compress(compress_request).unwrap();
+
+        let decompress_request = DecompressRequest {
+            input: JacInput::Path(jac_path.clone()),
+            output: OutputSink::Path(output_path.clone()),
+            format: DecompressFormat::JsonArray,
+            options: DecompressOptions::default(),
+        };
+        execute_decompress(decompress_request).unwrap();
+
+        let decoded = fs::read_to_string(&output_path).unwrap();
+        let original_json: Value =
+            serde_json::from_str(&fixture).expect("fixture should be valid JSON array");
+        let roundtrip_json: Value =
+            serde_json::from_str(&decoded).expect("round-trip output should parse as JSON");
+
+        assert_eq!(
+            roundtrip_json, original_json,
+            "round-trip JSON array should preserve nested objects"
+        );
+    }
+
     #[cfg(feature = "async")]
     mod async_tests {
         use super::*;
@@ -989,6 +1238,7 @@ mod tests {
                 input: InputSource::NdjsonPath(paths.input_ndjson.clone()),
                 output: OutputSink::Path(paths.output_jac.clone()),
                 options: CompressOptions::default(),
+                container_hint: None,
                 emit_index: true,
             };
 
@@ -999,7 +1249,7 @@ mod tests {
             let decompress_request = DecompressRequest {
                 input: JacInput::Path(paths.output_jac.clone()),
                 output: OutputSink::Path(paths.output_json.clone()),
-                format: DecompressFormat::Ndjson,
+                format: DecompressFormat::Auto,
                 options: DecompressOptions::default(),
             };
 

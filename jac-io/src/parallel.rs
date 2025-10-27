@@ -1,7 +1,7 @@
 //! Parallel processing support
 
-use jac_codec::{BlockBuilder, BlockData, CompressOpts, DecompressOpts};
-use jac_format::{FileHeader, Result};
+use jac_codec::{BlockBuilder, BlockData, CompressOpts, DecompressOpts, TryAddRecordOutcome};
+use jac_format::{FileHeader, JacError, Result};
 use rayon::prelude::*;
 use serde_json::Map;
 use serde_json::Value;
@@ -23,7 +23,15 @@ pub fn compress_blocks_parallel(
         .map(|chunk| {
             let mut builder = BlockBuilder::new(opts.clone());
             for record in chunk {
-                builder.add_record(record)?;
+                match builder.try_add_record(record)? {
+                    TryAddRecordOutcome::Added => {}
+                    TryAddRecordOutcome::BlockFull { record } => {
+                        return Err(JacError::Internal(format!(
+                            "Block limit exceeded while compressing record with fields: {}",
+                            record.keys().cloned().collect::<Vec<_>>().join(", ")
+                        )));
+                    }
+                }
             }
             builder.finalize()
         })
@@ -62,7 +70,7 @@ pub fn compress_parallel<R: Read, W: Write>(
         canonicalize_numbers: opts.canonicalize_numbers,
         nested_opaque: opts.nested_opaque,
         max_dict_entries: opts.max_dict_entries,
-        limits: opts.limits,
+        limits: opts.limits.clone(),
     };
 
     // Compress blocks in parallel
@@ -85,7 +93,7 @@ pub fn compress_parallel<R: Read, W: Write>(
         default_compressor: opts.default_codec.compressor_id(),
         default_compression_level: opts.default_codec.level(),
         block_size_hint_records: opts.block_target_records,
-        user_metadata: Vec::new(),
+        user_metadata: super::encode_header_metadata(&opts.limits)?,
     };
 
     let _header_bytes = header.encode()?;

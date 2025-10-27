@@ -8,7 +8,8 @@ use jac_codec::{BlockDecoder, DecompressOpts, FieldSegmentDecoder};
 use jac_format::constants::{BLOCK_MAGIC, FILE_MAGIC, INDEX_MAGIC};
 use jac_format::varint::decode_uleb128;
 use jac_format::{
-    BlockHeader, BlockIndexEntry, FieldDirectoryEntry, FileHeader, IndexFooter, JacError, Result,
+    BlockHeader, BlockIndexEntry, FieldDirectoryEntry, FileHeader, IndexFooter, JacError, Limits,
+    Result,
 };
 use serde_json::{Map, Value};
 
@@ -39,6 +40,14 @@ impl<R: Read + Seek> JacReader<R> {
         // Restore reader position to just after the file header so sequential reads start correctly
         reader.seek(SeekFrom::Start(after_header_pos))?;
 
+        let mut opts = opts;
+        if let Some(limit) = crate::decode_segment_limit(&file_header.user_metadata) {
+            let default_limit = Limits::default().max_segment_uncompressed_len;
+            if opts.limits.max_segment_uncompressed_len == default_limit {
+                opts.limits.max_segment_uncompressed_len = limit;
+            }
+        }
+
         Ok(Self {
             reader,
             file_header,
@@ -61,6 +70,11 @@ impl<R: Read + Seek> JacReader<R> {
     /// Access the decoded file header
     pub fn file_header(&self) -> &FileHeader {
         &self.file_header
+    }
+
+    /// Return the effective limits enforced by this reader.
+    pub fn limits(&self) -> &Limits {
+        &self.opts.limits
     }
 
     /// Iterate over blocks in the file

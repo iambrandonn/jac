@@ -1,14 +1,17 @@
 //! Negative decoding tests covering key `JacError` variants
 
-use jac_codec::{block_builder::BlockData, BlockBuilder, Codec, CompressOpts, DecompressOpts};
+use jac_codec::{
+    block_builder::BlockData, BlockBuilder, Codec, CompressOpts, DecompressOpts,
+    TryAddRecordOutcome,
+};
 use jac_format::varint::{decode_uleb128, encode_uleb128};
 use jac_format::{
     constants::FLAG_NESTED_OPAQUE, BlockHeader, FieldDirectoryEntry, FileHeader, JacError, Limits,
 };
 use jac_io::{
     execute_compress, execute_decompress, execute_project, CompressOptions, CompressRequest,
-    DecompressFormat, DecompressOptions, DecompressRequest, InputSource, JacInput, JacReader,
-    OutputSink, ProjectFormat, ProjectRequest,
+    ContainerFormat, DecompressFormat, DecompressOptions, DecompressRequest, InputSource, JacInput,
+    JacReader, OutputSink, ProjectFormat, ProjectRequest,
 };
 use serde_json::{json, Map, Value};
 use std::io::Cursor;
@@ -26,9 +29,15 @@ fn build_block(records: &[Value]) -> (FileHeader, BlockHeader, Vec<Vec<u8>>) {
 
     let mut builder = BlockBuilder::new(opts.clone());
     for record in records {
-        builder
-            .add_record(map_from(record.clone()))
-            .expect("add record");
+        match builder
+            .try_add_record(map_from(record.clone()))
+            .expect("try add record")
+        {
+            TryAddRecordOutcome::Added => {}
+            TryAddRecordOutcome::BlockFull { .. } => {
+                panic!("unexpected block flush in error case setup")
+            }
+        }
     }
 
     let BlockData {
@@ -248,6 +257,7 @@ fn compress_invalid_ndjson_reports_json_error() {
         input: InputSource::NdjsonReader(Box::new(Cursor::new(b"{invalid}\n".to_vec()))),
         output: OutputSink::Writer(Box::new(Cursor::new(Vec::new()))),
         options: CompressOptions::default(),
+        container_hint: Some(ContainerFormat::Ndjson),
         emit_index: false,
     };
 
@@ -336,20 +346,20 @@ fn reader_rejects_unsupported_version() {
 }
 
 #[test]
-fn compress_json_array_type_mismatch() {
+fn compress_single_object_succeeds() {
     let request = CompressRequest {
         input: InputSource::JsonArrayReader(Box::new(Cursor::new(Vec::from(
             b"{\"id\":1}\n" as &[u8],
         )))),
         output: OutputSink::Writer(Box::new(Cursor::new(Vec::new()))),
         options: CompressOptions::default(),
+        container_hint: Some(ContainerFormat::JsonArray),
         emit_index: true,
     };
 
     match execute_compress(request) {
-        Err(JacError::TypeMismatch) => {}
-        Err(err) => panic!("expected TypeMismatch, got {err:?}"),
-        Ok(_) => panic!("expected TypeMismatch, got Ok"),
+        Ok(_) => {} // Single object is now supported
+        Err(err) => panic!("expected Ok, got {err:?}"),
     }
 }
 
@@ -359,6 +369,7 @@ fn compress_missing_file_reports_io_error() {
         input: InputSource::NdjsonPath(PathBuf::from("/definitely/missing.ndjson")),
         output: OutputSink::Writer(Box::new(Cursor::new(Vec::new()))),
         options: CompressOptions::default(),
+        container_hint: None,
         emit_index: false,
     };
 

@@ -33,7 +33,7 @@ pub use block::{BlockHeader, FieldDirectoryEntry};
 pub use decimal::Decimal;
 pub use error::{JacError, Result};
 pub use footer::{BlockIndexEntry, IndexFooter};
-pub use header::FileHeader;
+pub use header::{ContainerFormat, FileHeader};
 pub use limits::Limits;
 pub use types::TypeTag;
 

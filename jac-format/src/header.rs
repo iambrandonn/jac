@@ -1,7 +1,38 @@
 //! File header structures
 
-use crate::constants::FILE_MAGIC;
+use crate::constants::{FILE_MAGIC, FLAG_CONTAINER_HINT_MASK, FLAG_CONTAINER_HINT_SHIFT};
+use crate::error::{JacError, Result as JacResult};
 use crate::varint::{decode_uleb128, encode_uleb128};
+
+/// Source container format hint stored in the header flags.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContainerFormat {
+    /// Encoder could not determine the original wrapper.
+    Unknown = 0,
+    /// Input was NDJSON (one object per line).
+    Ndjson = 1,
+    /// Input was a JSON array (`[ {...}, {...} ]`).
+    JsonArray = 2,
+}
+
+impl ContainerFormat {
+    /// Decode the container format hint from the provided flags.
+    pub fn from_flags(flags: u32) -> JacResult<Self> {
+        match (flags & FLAG_CONTAINER_HINT_MASK) >> FLAG_CONTAINER_HINT_SHIFT {
+            0 => Ok(ContainerFormat::Unknown),
+            1 => Ok(ContainerFormat::Ndjson),
+            2 => Ok(ContainerFormat::JsonArray),
+            _ => Err(JacError::UnsupportedFeature(
+                "reserved container format hint".to_string(),
+            )),
+        }
+    }
+
+    /// Encode the container format hint into the provided flags.
+    pub fn apply_to_flags(self, flags: u32) -> u32 {
+        (flags & !FLAG_CONTAINER_HINT_MASK) | ((self as u32) << FLAG_CONTAINER_HINT_SHIFT)
+    }
+}
 
 /// File header
 #[derive(Debug, Clone)]
@@ -20,7 +51,7 @@ pub struct FileHeader {
 
 impl FileHeader {
     /// Encode header to bytes
-    pub fn encode(&self) -> Result<Vec<u8>, crate::error::JacError> {
+    pub fn encode(&self) -> JacResult<Vec<u8>> {
         let mut result = Vec::new();
 
         // Magic bytes
@@ -48,34 +79,36 @@ impl FileHeader {
     }
 
     /// Decode header from bytes
-    pub fn decode(bytes: &[u8]) -> Result<(Self, usize), crate::error::JacError> {
+    pub fn decode(bytes: &[u8]) -> JacResult<(Self, usize)> {
         let mut pos = 0;
 
         // Check minimum length
         if bytes.len() < 4 {
-            return Err(crate::error::JacError::UnexpectedEof);
+            return Err(JacError::UnexpectedEof);
         }
 
         // Magic bytes
         let magic = &bytes[pos..pos + 4];
         if magic[..3] != FILE_MAGIC[..3] {
-            return Err(crate::error::JacError::InvalidMagic);
+            return Err(JacError::InvalidMagic);
         }
         let version = magic[3];
         if version != FILE_MAGIC[3] {
-            return Err(crate::error::JacError::UnsupportedVersion(version));
+            return Err(JacError::UnsupportedVersion(version));
         }
         pos += 4;
 
         // Check remaining length for fixed fields
         if bytes.len() < pos + 4 + 1 + 1 {
-            return Err(crate::error::JacError::UnexpectedEof);
+            return Err(JacError::UnexpectedEof);
         }
 
         // Flags (little-endian u32)
         let flags =
             u32::from_le_bytes([bytes[pos], bytes[pos + 1], bytes[pos + 2], bytes[pos + 3]]);
         pos += 4;
+        // Validate container hint bits early to surface reserved values.
+        ContainerFormat::from_flags(flags)?;
 
         // Default compressor
         let default_compressor = bytes[pos];
@@ -95,7 +128,7 @@ impl FileHeader {
 
         // Check if we have enough bytes for metadata
         if pos + metadata_len as usize > bytes.len() {
-            return Err(crate::error::JacError::UnexpectedEof);
+            return Err(JacError::UnexpectedEof);
         }
 
         // User metadata
@@ -127,6 +160,16 @@ impl FileHeader {
     /// Check if nested opaque flag is set
     pub fn nested_opaque(&self) -> bool {
         self.flags & crate::constants::FLAG_NESTED_OPAQUE != 0
+    }
+
+    /// Return the container format hint stored in the flags.
+    pub fn container_format_hint(&self) -> JacResult<ContainerFormat> {
+        ContainerFormat::from_flags(self.flags)
+    }
+
+    /// Update the container format hint in the flags.
+    pub fn set_container_format_hint(&mut self, hint: ContainerFormat) {
+        self.flags = hint.apply_to_flags(self.flags);
     }
 }
 
@@ -206,6 +249,54 @@ mod tests {
         assert_eq!(header.flags, decoded.flags);
         assert_eq!(header.user_metadata, decoded.user_metadata);
         assert_eq!(bytes_consumed, encoded.len());
+    }
+
+    #[test]
+    fn test_container_hint_set_and_get() {
+        let mut header = FileHeader {
+            flags: FLAG_NESTED_OPAQUE,
+            default_compressor: 0,
+            default_compression_level: 0,
+            block_size_hint_records: 1,
+            user_metadata: vec![],
+        };
+
+        header.set_container_format_hint(ContainerFormat::JsonArray);
+        assert_eq!(
+            header.container_format_hint().unwrap(),
+            ContainerFormat::JsonArray
+        );
+        // Ensure other bits remain.
+        assert!(header.nested_opaque());
+
+        header.set_container_format_hint(ContainerFormat::Ndjson);
+        assert_eq!(
+            header.container_format_hint().unwrap(),
+            ContainerFormat::Ndjson
+        );
+    }
+
+    #[test]
+    fn test_container_hint_reserved_bits_rejected() {
+        let mut encoded = FileHeader {
+            flags: 0,
+            default_compressor: 0,
+            default_compression_level: 0,
+            block_size_hint_records: 0,
+            user_metadata: vec![],
+        }
+        .encode()
+        .unwrap();
+
+        let reserved_bits = ((0b11u32) << FLAG_CONTAINER_HINT_SHIFT).to_le_bytes();
+        encoded[4..8].copy_from_slice(&reserved_bits);
+
+        match FileHeader::decode(&encoded) {
+            Err(crate::error::JacError::UnsupportedFeature(msg)) => {
+                assert!(msg.contains("container format hint"));
+            }
+            other => panic!("expected UnsupportedFeature, got {other:?}"),
+        }
     }
 
     #[test]

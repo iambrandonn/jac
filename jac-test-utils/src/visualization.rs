@@ -3,10 +3,10 @@
 //! This module provides tools for generating visual reports and charts
 //! to help understand test results and performance.
 
-use crate::debug_tools::{TestMetrics, TestVisualization, PerformanceSummary};
-use std::time::Duration;
-use std::path::PathBuf;
+use crate::debug_tools::{PerformanceSummary, TestMetrics, TestVisualization};
 use std::collections::HashMap;
+use std::path::PathBuf;
+use std::time::Duration;
 
 /// HTML report generator for test results
 pub struct HtmlReportGenerator {
@@ -26,7 +26,11 @@ impl HtmlReportGenerator {
     }
 
     /// Generate HTML report from test metrics
-    pub fn generate_report(&self, metrics: &[TestMetrics], output_path: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn generate_report(
+        &self,
+        metrics: &[TestMetrics],
+        output_path: &PathBuf,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let summary = self.calculate_summary(metrics);
         let visualization = self.generate_visualization_data(metrics);
 
@@ -42,29 +46,30 @@ impl HtmlReportGenerator {
         let passed_tests = metrics.iter().filter(|m| m.success).count() as u32;
         let failed_tests = total_tests - passed_tests;
 
-        let total_execution_time: Duration = metrics.iter()
-            .map(|m| m.execution_time)
-            .sum();
+        let total_execution_time: Duration = metrics.iter().map(|m| m.execution_time).sum();
 
         let average_execution_time = if total_tests > 0 {
-            std::time::Duration::from_nanos(total_execution_time.as_nanos() as u64 / total_tests as u64)
+            std::time::Duration::from_nanos(
+                total_execution_time.as_nanos() as u64 / total_tests as u64,
+            )
         } else {
             std::time::Duration::ZERO
         };
 
-        let slowest_test = metrics.iter()
+        let slowest_test = metrics
+            .iter()
             .max_by_key(|m| m.execution_time)
             .map(|m| m.test_name.clone());
 
-        let fastest_test = metrics.iter()
+        let fastest_test = metrics
+            .iter()
             .min_by_key(|m| m.execution_time)
             .map(|m| m.test_name.clone());
 
-        let memory_peak_bytes = metrics.iter()
-            .filter_map(|m| m.memory_usage_bytes)
-            .max();
+        let memory_peak_bytes = metrics.iter().filter_map(|m| m.memory_usage_bytes).max();
 
-        let cpu_peak_percent = metrics.iter()
+        let cpu_peak_percent = metrics
+            .iter()
             .filter_map(|m| m.cpu_usage_percent)
             .max_by(|a, b| a.partial_cmp(b).unwrap());
 
@@ -83,21 +88,19 @@ impl HtmlReportGenerator {
 
     /// Generate visualization data from metrics
     fn generate_visualization_data(&self, metrics: &[TestMetrics]) -> TestVisualization {
-        let test_names: Vec<String> = metrics.iter()
-            .map(|m| m.test_name.clone())
-            .collect();
+        let test_names: Vec<String> = metrics.iter().map(|m| m.test_name.clone()).collect();
 
-        let execution_times: Vec<f64> = metrics.iter()
+        let execution_times: Vec<f64> = metrics
+            .iter()
             .map(|m| m.execution_time.as_secs_f64())
             .collect();
 
-        let memory_usage: Vec<Option<f64>> = metrics.iter()
+        let memory_usage: Vec<Option<f64>> = metrics
+            .iter()
             .map(|m| m.memory_usage_bytes.map(|b| b as f64 / 1_048_576.0)) // Convert to MB
             .collect();
 
-        let cpu_usage: Vec<Option<f64>> = metrics.iter()
-            .map(|m| m.cpu_usage_percent)
-            .collect();
+        let cpu_usage: Vec<Option<f64>> = metrics.iter().map(|m| m.cpu_usage_percent).collect();
 
         let performance_chart = crate::debug_tools::PerformanceChart {
             test_names: test_names.clone(),
@@ -123,7 +126,8 @@ impl HtmlReportGenerator {
             metrics.iter().filter(|m| !m.success).count() as f64 / metrics.len() as f64
         };
 
-        let most_common_error = error_types.iter()
+        let most_common_error = error_types
+            .iter()
             .max_by_key(|(_, count)| *count)
             .map(|(error_type, _)| error_type.clone());
 
@@ -144,8 +148,20 @@ impl HtmlReportGenerator {
         let execution_timeline = crate::debug_tools::ExecutionTimeline {
             timestamps: metrics.iter().map(|m| m.timestamp).collect(),
             test_names,
-            durations: metrics.iter().map(|m| m.execution_time.as_secs_f64()).collect(),
-            status: metrics.iter().map(|m| if m.success { "passed".to_string() } else { "failed".to_string() }).collect(),
+            durations: metrics
+                .iter()
+                .map(|m| m.execution_time.as_secs_f64())
+                .collect(),
+            status: metrics
+                .iter()
+                .map(|m| {
+                    if m.success {
+                        "passed".to_string()
+                    } else {
+                        "failed".to_string()
+                    }
+                })
+                .collect(),
         };
 
         TestVisualization {
@@ -172,14 +188,20 @@ impl HtmlReportGenerator {
     }
 
     /// Render HTML report
-    fn render_html(&self, summary: &PerformanceSummary, visualization: &TestVisualization) -> Result<String, Box<dyn std::error::Error>> {
+    fn render_html(
+        &self,
+        summary: &PerformanceSummary,
+        visualization: &TestVisualization,
+    ) -> Result<String, Box<dyn std::error::Error>> {
         let mut html = String::new();
 
         html.push_str("<!DOCTYPE html>\n");
         html.push_str("<html lang=\"en\">\n");
         html.push_str("<head>\n");
         html.push_str("    <meta charset=\"UTF-8\">\n");
-        html.push_str("    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n");
+        html.push_str(
+            "    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n",
+        );
         html.push_str("    <title>JAC Test Results Report</title>\n");
         html.push_str("    <script src=\"https://cdn.jsdelivr.net/npm/chart.js\"></script>\n");
         html.push_str("    <style>\n");
@@ -191,7 +213,10 @@ impl HtmlReportGenerator {
         // Header
         html.push_str("    <header>\n");
         html.push_str("        <h1>JAC Test Results Report</h1>\n");
-        html.push_str(&format!("        <p>Generated on: {}</p>\n", chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")));
+        html.push_str(&format!(
+            "        <p>Generated on: {}</p>\n",
+            chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
+        ));
         html.push_str("    </header>\n");
 
         // Summary section
@@ -200,15 +225,24 @@ impl HtmlReportGenerator {
         html.push_str("        <div class=\"summary-grid\">\n");
         html.push_str(&format!("            <div class=\"summary-item\">\n"));
         html.push_str(&format!("                <h3>Total Tests</h3>\n"));
-        html.push_str(&format!("                <span class=\"number\">{}</span>\n", summary.total_tests));
+        html.push_str(&format!(
+            "                <span class=\"number\">{}</span>\n",
+            summary.total_tests
+        ));
         html.push_str("            </div>\n");
         html.push_str(&format!("            <div class=\"summary-item\">\n"));
         html.push_str(&format!("                <h3>Passed</h3>\n"));
-        html.push_str(&format!("                <span class=\"number success\">{}</span>\n", summary.passed_tests));
+        html.push_str(&format!(
+            "                <span class=\"number success\">{}</span>\n",
+            summary.passed_tests
+        ));
         html.push_str("            </div>\n");
         html.push_str(&format!("            <div class=\"summary-item\">\n"));
         html.push_str(&format!("                <h3>Failed</h3>\n"));
-        html.push_str(&format!("                <span class=\"number error\">{}</span>\n", summary.failed_tests));
+        html.push_str(&format!(
+            "                <span class=\"number error\">{}</span>\n",
+            summary.failed_tests
+        ));
         html.push_str("            </div>\n");
         html.push_str(&format!("            <div class=\"summary-item\">\n"));
         html.push_str(&format!("                <h3>Success Rate</h3>\n"));
@@ -217,7 +251,10 @@ impl HtmlReportGenerator {
         } else {
             0.0
         };
-        html.push_str(&format!("                <span class=\"number\">{:.1}%</span>\n", success_rate));
+        html.push_str(&format!(
+            "                <span class=\"number\">{:.1}%</span>\n",
+            success_rate
+        ));
         html.push_str("            </div>\n");
         html.push_str("        </div>\n");
         html.push_str("    </section>\n");
@@ -228,22 +265,34 @@ impl HtmlReportGenerator {
         html.push_str("        <div class=\"performance-grid\">\n");
         html.push_str(&format!("            <div class=\"performance-item\">\n"));
         html.push_str(&format!("                <h3>Total Execution Time</h3>\n"));
-        html.push_str(&format!("                <span class=\"number\">{:.2}s</span>\n", summary.total_execution_time.as_secs_f64()));
+        html.push_str(&format!(
+            "                <span class=\"number\">{:.2}s</span>\n",
+            summary.total_execution_time.as_secs_f64()
+        ));
         html.push_str("            </div>\n");
         html.push_str(&format!("            <div class=\"performance-item\">\n"));
         html.push_str(&format!("                <h3>Average Test Time</h3>\n"));
-        html.push_str(&format!("                <span class=\"number\">{:.2}ms</span>\n", summary.average_execution_time.as_millis()));
+        html.push_str(&format!(
+            "                <span class=\"number\">{:.2}ms</span>\n",
+            summary.average_execution_time.as_millis()
+        ));
         html.push_str("            </div>\n");
         if let Some(ref slowest) = summary.slowest_test {
             html.push_str(&format!("            <div class=\"performance-item\">\n"));
             html.push_str(&format!("                <h3>Slowest Test</h3>\n"));
-            html.push_str(&format!("                <span class=\"text\">{}</span>\n", slowest));
+            html.push_str(&format!(
+                "                <span class=\"text\">{}</span>\n",
+                slowest
+            ));
             html.push_str("            </div>\n");
         }
         if let Some(ref fastest) = summary.fastest_test {
             html.push_str(&format!("            <div class=\"performance-item\">\n"));
             html.push_str(&format!("                <h3>Fastest Test</h3>\n"));
-            html.push_str(&format!("                <span class=\"text\">{}</span>\n", fastest));
+            html.push_str(&format!(
+                "                <span class=\"text\">{}</span>\n",
+                fastest
+            ));
             html.push_str("            </div>\n");
         }
         html.push_str("        </div>\n");
@@ -413,16 +462,30 @@ impl HtmlReportGenerator {
         js.push_str("    type: 'bar',\n");
         js.push_str("    data: {\n");
         js.push_str("        labels: [");
-        for (i, name) in visualization.performance_chart.test_names.iter().enumerate() {
-            if i > 0 { js.push_str(", "); }
+        for (i, name) in visualization
+            .performance_chart
+            .test_names
+            .iter()
+            .enumerate()
+        {
+            if i > 0 {
+                js.push_str(", ");
+            }
             js.push_str(&format!("\"{}\"", name));
         }
         js.push_str("],\n");
         js.push_str("        datasets: [{\n");
         js.push_str("            label: 'Execution Time (seconds)',\n");
         js.push_str("            data: [");
-        for (i, time) in visualization.performance_chart.execution_times.iter().enumerate() {
-            if i > 0 { js.push_str(", "); }
+        for (i, time) in visualization
+            .performance_chart
+            .execution_times
+            .iter()
+            .enumerate()
+        {
+            if i > 0 {
+                js.push_str(", ");
+            }
             js.push_str(&format!("{:.3}", time));
         }
         js.push_str("],\n");
@@ -452,16 +515,30 @@ impl HtmlReportGenerator {
         js.push_str("    type: 'line',\n");
         js.push_str("    data: {\n");
         js.push_str("        labels: [");
-        for (i, name) in visualization.performance_chart.test_names.iter().enumerate() {
-            if i > 0 { js.push_str(", "); }
+        for (i, name) in visualization
+            .performance_chart
+            .test_names
+            .iter()
+            .enumerate()
+        {
+            if i > 0 {
+                js.push_str(", ");
+            }
             js.push_str(&format!("\"{}\"", name));
         }
         js.push_str("],\n");
         js.push_str("        datasets: [{\n");
         js.push_str("            label: 'Memory Usage (MB)',\n");
         js.push_str("            data: [");
-        for (i, memory) in visualization.performance_chart.memory_usage.iter().enumerate() {
-            if i > 0 { js.push_str(", "); }
+        for (i, memory) in visualization
+            .performance_chart
+            .memory_usage
+            .iter()
+            .enumerate()
+        {
+            if i > 0 {
+                js.push_str(", ");
+            }
             match memory {
                 Some(m) => js.push_str(&format!("{:.2}", m)),
                 None => js.push_str("null"),
@@ -504,7 +581,10 @@ impl TestDashboardGenerator {
     }
 
     /// Generate complete test dashboard
-    pub fn generate_dashboard(&self, metrics: &[TestMetrics]) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn generate_dashboard(
+        &self,
+        metrics: &[TestMetrics],
+    ) -> Result<(), Box<dyn std::error::Error>> {
         // Create output directory if it doesn't exist
         std::fs::create_dir_all(&self.output_dir)?;
 
@@ -526,9 +606,15 @@ impl TestDashboardGenerator {
     }
 
     /// Generate CSV summary of test results
-    fn generate_csv_summary(&self, metrics: &[TestMetrics], path: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    fn generate_csv_summary(
+        &self,
+        metrics: &[TestMetrics],
+        path: &PathBuf,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let mut csv = String::new();
-        csv.push_str("test_name,success,execution_time_ms,memory_usage_mb,cpu_usage_percent,error_message\n");
+        csv.push_str(
+            "test_name,success,execution_time_ms,memory_usage_mb,cpu_usage_percent,error_message\n",
+        );
 
         for metric in metrics {
             csv.push_str(&format!(
@@ -536,7 +622,10 @@ impl TestDashboardGenerator {
                 metric.test_name,
                 metric.success,
                 metric.execution_time.as_millis(),
-                metric.memory_usage_bytes.map(|b| b as f64 / 1_048_576.0).unwrap_or(0.0),
+                metric
+                    .memory_usage_bytes
+                    .map(|b| b as f64 / 1_048_576.0)
+                    .unwrap_or(0.0),
                 metric.cpu_usage_percent.unwrap_or(0.0),
                 metric.error_message.as_deref().unwrap_or("")
             ));
@@ -555,19 +644,17 @@ mod tests {
 
     #[test]
     fn test_html_report_generation() {
-        let metrics = vec![
-            TestMetrics {
-                test_name: "test_example".to_string(),
-                execution_time: Duration::from_millis(100),
-                memory_usage_bytes: Some(1024 * 1024),
-                cpu_usage_percent: Some(50.0),
-                io_operations: None,
-                assertions_count: 5,
-                success: true,
-                error_message: None,
-                timestamp: chrono::Utc::now(),
-            }
-        ];
+        let metrics = vec![TestMetrics {
+            test_name: "test_example".to_string(),
+            execution_time: Duration::from_millis(100),
+            memory_usage_bytes: Some(1024 * 1024),
+            cpu_usage_percent: Some(50.0),
+            io_operations: None,
+            assertions_count: 5,
+            success: true,
+            error_message: None,
+            timestamp: chrono::Utc::now(),
+        }];
 
         let generator = HtmlReportGenerator::new();
         let temp_dir = std::env::temp_dir();
@@ -582,19 +669,17 @@ mod tests {
 
     #[test]
     fn test_dashboard_generation() {
-        let metrics = vec![
-            TestMetrics {
-                test_name: "test_example".to_string(),
-                execution_time: Duration::from_millis(100),
-                memory_usage_bytes: Some(1024 * 1024),
-                cpu_usage_percent: Some(50.0),
-                io_operations: None,
-                assertions_count: 5,
-                success: true,
-                error_message: None,
-                timestamp: chrono::Utc::now(),
-            }
-        ];
+        let metrics = vec![TestMetrics {
+            test_name: "test_example".to_string(),
+            execution_time: Duration::from_millis(100),
+            memory_usage_bytes: Some(1024 * 1024),
+            cpu_usage_percent: Some(50.0),
+            io_operations: None,
+            assertions_count: 5,
+            success: true,
+            error_message: None,
+            timestamp: chrono::Utc::now(),
+        }];
 
         let temp_dir = std::env::temp_dir().join("test_dashboard");
         let generator = TestDashboardGenerator::new(temp_dir.clone());

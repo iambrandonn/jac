@@ -1,6 +1,6 @@
 //! Streaming writer for JAC files
 
-use jac_codec::{BlockBuilder, BlockData, CompressOpts};
+use jac_codec::{BlockBuilder, BlockData, CompressOpts, TryAddRecordOutcome};
 use jac_format::{BlockIndexEntry, FileHeader, IndexFooter, JacError, Result};
 use std::io::Write;
 
@@ -24,10 +24,8 @@ impl<W: Write> JacWriter<W> {
 
         let block_builder = BlockBuilder::new(opts.clone());
 
-        let metrics = WriterMetrics {
-            bytes_written: header_bytes.len() as u64,
-            ..WriterMetrics::default()
-        };
+        let mut metrics = WriterMetrics::default();
+        metrics.bytes_written = header_bytes.len() as u64;
 
         Ok(Self {
             writer: Some(writer),
@@ -42,14 +40,24 @@ impl<W: Write> JacWriter<W> {
 
     /// Write record to current block
     pub fn write_record(&mut self, rec: &serde_json::Map<String, serde_json::Value>) -> Result<()> {
-        // If block is full, flush it first
-        if self.block_builder.is_full() {
-            self.flush_block()?;
-        }
+        let mut pending = rec.clone();
 
-        self.block_builder.add_record(rec.clone())?;
-        self.metrics.records_written += 1;
-        Ok(())
+        loop {
+            if self.block_builder.is_full() {
+                self.flush_block()?;
+            }
+
+            match self.block_builder.try_add_record(pending)? {
+                TryAddRecordOutcome::Added => {
+                    self.metrics.records_written += 1;
+                    return Ok(());
+                }
+                TryAddRecordOutcome::BlockFull { record } => {
+                    self.flush_block()?;
+                    pending = record;
+                }
+            }
+        }
     }
 
     /// Write multiple records from an iterator.
@@ -70,12 +78,18 @@ impl<W: Write> JacWriter<W> {
         }
 
         // Finalize the block (this consumes the block builder)
+        let previous_flushes = self.block_builder.segment_limit_flushes();
+        let previous_rejections = self.block_builder.segment_limit_record_rejections();
+
         let block_data = std::mem::replace(
             &mut self.block_builder,
             BlockBuilder::new(self.opts.clone()),
         )
         .finalize()?;
         let block_bytes = self.encode_block(&block_data)?;
+
+        self.metrics.segment_limit_flushes += previous_flushes as u64;
+        self.metrics.segment_limit_record_rejections += previous_rejections as u64;
 
         // Track block index entry
         let block_offset = self.current_offset;
@@ -230,4 +244,8 @@ pub struct WriterMetrics {
     pub blocks_written: u64,
     /// Total bytes written to the underlying writer, including index data.
     pub bytes_written: u64,
+    /// Number of times block flushes occurred due to segment limit pressure.
+    pub segment_limit_flushes: u64,
+    /// Number of records rejected because a single field exceeded segment limits.
+    pub segment_limit_record_rejections: u64,
 }

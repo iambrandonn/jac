@@ -255,7 +255,10 @@ impl TestRegistry {
     }
 
     /// Get all tests with a specific requirement
-    pub fn get_tests_with_requirement(&self, requirement: TestRequirement) -> Vec<(&String, &TestMetadata)> {
+    pub fn get_tests_with_requirement(
+        &self,
+        requirement: TestRequirement,
+    ) -> Vec<(&String, &TestMetadata)> {
         self.tests
             .iter()
             .filter(|(_, metadata)| metadata.requirement == requirement)
@@ -278,7 +281,11 @@ impl TestRegistry {
         ] {
             let tests = self.get_tests_in_category(category);
             if !tests.is_empty() {
-                report.push_str(&format!("## {} Tests ({})\n\n", category.name(), tests.len()));
+                report.push_str(&format!(
+                    "## {} Tests ({})\n\n",
+                    category.name(),
+                    tests.len()
+                ));
                 report.push_str(&format!("{}\n\n", category.description()));
 
                 for (test_name, metadata) in tests {
@@ -319,7 +326,10 @@ mod tests {
     fn test_category_attributes() {
         assert_eq!(TestCategory::Unit.test_attribute(), "#[test]");
         assert_eq!(TestCategory::Slow.test_attribute(), "#[test] #[ignore]");
-        assert_eq!(TestCategory::Performance.test_attribute(), "#[test] #[ignore]");
+        assert_eq!(
+            TestCategory::Performance.test_attribute(),
+            "#[test] #[ignore]"
+        );
     }
 
     #[test]

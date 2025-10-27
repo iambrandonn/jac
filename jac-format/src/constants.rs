@@ -24,6 +24,10 @@ pub const FLAG_CANONICALIZE_KEYS: u32 = 1 << 0;
 pub const FLAG_CANONICALIZE_NUMBERS: u32 = 1 << 1;
 /// Flag indicating nested values remain opaque blobs.
 pub const FLAG_NESTED_OPAQUE: u32 = 1 << 2;
+/// Bit offset for the container format hint stored in the header flags.
+pub const FLAG_CONTAINER_HINT_SHIFT: u32 = 3;
+/// Mask covering the two bits reserved for the container format hint.
+pub const FLAG_CONTAINER_HINT_MASK: u32 = 0b11 << FLAG_CONTAINER_HINT_SHIFT;
 
 /// Type tag representing a `null` value.
 pub const TAG_NULL: u8 = 0;

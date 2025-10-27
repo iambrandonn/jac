@@ -1,0 +1,47 @@
+[
+  {
+    "id": 1,
+    "user": {
+      "name": "alice",
+      "prefs": {
+        "theme": "dark",
+        "notifications": {
+          "email": true,
+          "sms": false
+        }
+      }
+    },
+    "events": [
+      {
+        "type": "login",
+        "timestamp": {"$date": "2024-01-01T00:00:00Z"}
+      },
+      {
+        "type": "click",
+        "metadata": {
+          "button": "start",
+          "coords": {"x": 10, "y": 20}
+        }
+      }
+    ]
+  },
+  {
+    "id": 2,
+    "user": {
+      "name": "bob",
+      "prefs": {
+        "theme": "light",
+        "notifications": {
+          "email": false,
+          "sms": true
+        }
+      }
+    },
+    "events": [
+      {
+        "type": "logout",
+        "timestamp": {"$date": "2024-01-02T00:00:00Z"}
+      }
+    ]
+  }
+]

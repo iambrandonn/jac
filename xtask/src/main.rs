@@ -99,7 +99,15 @@ fn run_conformance() {
 
     // Run conformance tests with detailed output
     let status = Command::new("cargo")
-        .args(&["test", "-p", "jac-codec", "--test", "conformance", "--", "--nocapture"])
+        .args(&[
+            "test",
+            "-p",
+            "jac-codec",
+            "--test",
+            "conformance",
+            "--",
+            "--nocapture",
+        ])
         .status()
         .expect("Failed to run conformance tests");
 
@@ -118,9 +126,7 @@ fn run_fuzz() {
     println!("🔬 Running fuzzing targets...");
 
     // Check if cargo-fuzz is installed
-    let fuzz_check = Command::new("cargo")
-        .args(&["fuzz", "--help"])
-        .output();
+    let fuzz_check = Command::new("cargo").args(&["fuzz", "--help"]).output();
 
     if fuzz_check.is_err() {
         eprintln!("❌ cargo-fuzz not installed. Install with: cargo install cargo-fuzz");
@@ -128,7 +134,13 @@ fn run_fuzz() {
     }
 
     // Run fuzz targets for a short time
-    let fuzz_targets = ["fuzz_varint", "fuzz_decode_block", "fuzz_projection", "fuzz_compression", "fuzz_bitpack"];
+    let fuzz_targets = [
+        "fuzz_varint",
+        "fuzz_decode_block",
+        "fuzz_projection",
+        "fuzz_compression",
+        "fuzz_bitpack",
+    ];
 
     for target in &fuzz_targets {
         println!("🔍 Running fuzz target: {}", target);
@@ -323,7 +335,10 @@ fn generate_conformance_report() {
     if let Err(e) = fs::write(&report_path, report) {
         eprintln!("❌ Failed to write conformance report: {}", e);
     } else {
-        println!("📊 Conformance report written to: {}", report_path.display());
+        println!(
+            "📊 Conformance report written to: {}",
+            report_path.display()
+        );
     }
 }
 
@@ -389,7 +404,10 @@ fn generate_compliance_dashboard() {
     if let Err(e) = fs::write(&dashboard_path, dashboard) {
         eprintln!("❌ Failed to write compliance dashboard: {}", e);
     } else {
-        println!("📊 Compliance dashboard written to: {}", dashboard_path.display());
+        println!(
+            "📊 Compliance dashboard written to: {}",
+            dashboard_path.display()
+        );
     }
 }
 
@@ -459,7 +477,10 @@ fn generate_error_coverage_report() {
     if let Err(e) = fs::write(&report_path, report) {
         eprintln!("❌ Failed to write error coverage report: {}", e);
     } else {
-        println!("📊 Error coverage report written to: {}", report_path.display());
+        println!(
+            "📊 Error coverage report written to: {}",
+            report_path.display()
+        );
     }
 }
 
@@ -555,7 +576,10 @@ fn generate_spec_compliance_summary() {
     if let Err(e) = fs::write(&summary_path, summary) {
         eprintln!("❌ Failed to write spec compliance summary: {}", e);
     } else {
-        println!("📊 Spec compliance summary written to: {}", summary_path.display());
+        println!(
+            "📊 Spec compliance summary written to: {}",
+            summary_path.display()
+        );
     }
 }
 

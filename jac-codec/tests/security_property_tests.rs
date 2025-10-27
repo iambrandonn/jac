@@ -3,17 +3,14 @@
 //! This module contains property-based tests that specifically target
 //! security vulnerabilities and attack vectors.
 
-use proptest::prelude::*;
+use jac_codec::{block_decode::DecompressOpts, BlockDecoder};
 use jac_format::{
-    varint::{decode_uleb128, encode_uleb128, zigzag_encode, zigzag_decode},
     bitpack::PresenceBitmap,
     checksum::compute_crc32c,
-    TypeTag, Limits,
+    varint::{decode_uleb128, encode_uleb128, zigzag_decode, zigzag_encode},
+    Limits, TypeTag,
 };
-use jac_codec::{
-    block_decode::DecompressOpts,
-    BlockDecoder,
-};
+use proptest::prelude::*;
 
 /// Property test for varint security
 /// Ensures varint operations don't cause memory exhaustion or overflow

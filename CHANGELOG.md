@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `jac ls --stats` sampling-based field analysis with JSON/table outputs
 - Configurable `--stats-sample` limit for tuning per-field sampling in `jac ls --stats`
 - Integration tests covering CLI inspection and projection workflows
+- File header stores container format hints (NDJSON vs JSON array) and `jac unpack` now defaults to the recorded wrapper when no format flag is provided.
+- `jac pack --max-segment-bytes` flag (with `--allow-large-segments`) to opt into larger segment ceilings, surfaced in writer metrics and CLI summaries, plus tests around limit overrides.
+- File headers now encode the effective segment limit in metadata so decoders mirror the producer's ceiling when the reader uses default limits.
 
 ### Changed
 - Enhanced CLI documentation (README/PLAN/AGENTS) to reflect Phase 8 capabilities
@@ -30,7 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - N/A
 
 ### Security
-- N/A
+- Segment-limit overrides are warning-gated and recorded in header metadata so decoders still enforce the producer's ceiling; defaults remain 64 MiB unless explicitly raised.
 
 ---
 

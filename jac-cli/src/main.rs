@@ -10,8 +10,8 @@ use clap::{Parser, Subcommand, ValueEnum};
 use indicatif::{ProgressBar, ProgressStyle};
 use jac_io::{
     execute_compress, execute_decompress, BlockHandle, Codec, CompressOptions, CompressRequest,
-    CompressSummary, DecompressFormat, DecompressOptions, DecompressOpts, DecompressRequest,
-    DecompressSummary, InputSource, JacInput, JacReader, Limits, OutputSink,
+    CompressSummary, ContainerFormat, DecompressFormat, DecompressOptions, DecompressOpts,
+    DecompressRequest, DecompressSummary, InputSource, JacInput, JacReader, Limits, OutputSink,
 };
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -26,8 +26,12 @@ use std::time::{Duration, Instant};
 #[command(about = "JSON-Aware Compression CLI tool")]
 #[command(version)]
 struct Cli {
+    /// Input file to compress (shortcut: jac <file> creates <file>.jac)
+    #[arg(help = "Input file to compress (shortcut mode)")]
+    input_file: Option<PathBuf>,
+
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 #[derive(Subcommand)]
@@ -43,7 +47,7 @@ enum Commands {
         #[arg(long, default_value = "100000")]
         block_records: usize,
         /// Zstd compression level
-        #[arg(long, default_value = "15")]
+        #[arg(long, default_value = "6")]
         zstd_level: u8,
         /// Canonicalize keys (lexicographic order)
         #[arg(long)]
@@ -66,6 +70,12 @@ enum Commands {
         /// Show progress spinner while compressing
         #[arg(long)]
         progress: bool,
+        /// Override segment size limit in bytes (requires --allow-large-segments when above default)
+        #[arg(long = "max-segment-bytes", value_name = "BYTES")]
+        max_segment_bytes: Option<u64>,
+        /// Confirm raising segment limits above the default 64 MiB ceiling
+        #[arg(long = "allow-large-segments")]
+        allow_large_segments: bool,
     },
     /// Decompress .jac to JSON/NDJSON
     Unpack {
@@ -153,8 +163,37 @@ enum CatFormat {
 fn main() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
 
+    // Handle shortcut mode: jac <file> -> jac pack <file> -o <file>.jac
+    if let Some(input_file) = cli.input_file {
+        if cli.command.is_some() {
+            return Err("Cannot specify both input file and subcommand".into());
+        }
+
+        // Auto-generate output filename by appending .jac
+        let output_file = input_file.with_extension("jac");
+
+        // Use default compression settings for shortcut mode
+        handle_pack(
+            input_file,
+            output_file,
+            100000, // default block_records
+            6,      // default zstd_level
+            false,  // canonicalize_keys
+            false,  // canonicalize_numbers
+            4096,   // max_dict_entries
+            true,   // emit_index
+            false,  // force_ndjson
+            false,  // force_json_array
+            false,  // show_progress
+            None,   // max_segment_bytes
+            false,  // allow_large_segments
+        )?;
+        return Ok(());
+    }
+
+    // Handle subcommand mode
     match cli.command {
-        Commands::Pack {
+        Some(Commands::Pack {
             input,
             output,
             block_records,
@@ -166,7 +205,9 @@ fn main() -> Result<(), Box<dyn Error>> {
             ndjson,
             json_array,
             progress,
-        } => {
+            max_segment_bytes,
+            allow_large_segments,
+        }) => {
             handle_pack(
                 input,
                 output,
@@ -179,18 +220,20 @@ fn main() -> Result<(), Box<dyn Error>> {
                 ndjson,
                 json_array,
                 progress,
+                max_segment_bytes,
+                allow_large_segments,
             )?;
         }
-        Commands::Unpack {
+        Some(Commands::Unpack {
             input,
             output,
             ndjson,
             json_array,
             progress,
-        } => {
+        }) => {
             handle_unpack(input, output, ndjson, json_array, progress)?;
         }
-        Commands::Ls {
+        Some(Commands::Ls {
             input,
             format,
             verbose,
@@ -198,7 +241,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             blocks_only,
             stats,
             stats_sample,
-        } => {
+        }) => {
             handle_ls(
                 input,
                 format,
@@ -209,14 +252,20 @@ fn main() -> Result<(), Box<dyn Error>> {
                 stats_sample,
             )?;
         }
-        Commands::Cat {
+        Some(Commands::Cat {
             input,
             field,
             format,
             blocks,
             progress,
-        } => {
+        }) => {
             handle_cat(input, field, format, blocks, progress)?;
+        }
+        None => {
+            return Err(
+                "No input file or subcommand specified. Use 'jac --help' for usage information."
+                    .into(),
+            );
         }
     }
 
@@ -236,9 +285,35 @@ fn handle_pack(
     force_ndjson: bool,
     force_json_array: bool,
     show_progress: bool,
+    max_segment_bytes: Option<u64>,
+    allow_large_segments: bool,
 ) -> Result<(), Box<dyn Error>> {
     let start = Instant::now();
-    let input_source = resolve_input_source(&input, force_ndjson, force_json_array)?;
+    let mut limits = Limits::default();
+    if let Some(bytes) = max_segment_bytes {
+        if bytes == 0 {
+            return Err("--max-segment-bytes must be greater than zero".into());
+        }
+        let default_limit = Limits::default().max_segment_uncompressed_len as u64;
+        if bytes > default_limit && !allow_large_segments {
+            return Err(
+                "--max-segment-bytes above 67108864 requires --allow-large-segments".into(),
+            );
+        }
+        if bytes > usize::MAX as u64 {
+            return Err("--max-segment-bytes exceeds platform usize range".into());
+        }
+        if bytes > default_limit {
+            eprintln!(
+                "Warning: increasing --max-segment-bytes to {} may raise memory usage; ensure inputs are trusted.",
+                bytes
+            );
+        }
+        limits.max_segment_uncompressed_len = bytes as usize;
+    }
+
+    let (input_source, container_hint) =
+        resolve_input_source(&input, force_ndjson, force_json_array)?;
     let options = CompressOptions {
         block_target_records: block_records,
         default_codec: Codec::Zstd(zstd_level),
@@ -246,13 +321,14 @@ fn handle_pack(
         canonicalize_numbers,
         nested_opaque: true,
         max_dict_entries,
-        limits: Limits::default(),
+        limits,
     };
 
     let request = CompressRequest {
         input: input_source,
         output: OutputSink::Path(output.clone()),
         options,
+        container_hint,
         emit_index,
     };
 
@@ -264,12 +340,14 @@ fn handle_pack(
     let mb_rate = summary.metrics.bytes_written as f64 / (1024.0 * 1024.0) / secs;
     if let Some(pb) = progress_bar.take() {
         pb.finish_with_message(format!(
-            "Compressed {} records across {} blocks in {:.2?} ({:.1} rec/s, {:.2} MiB/s)",
+            "Compressed {} records across {} blocks in {:.2?} ({:.1} rec/s, {:.2} MiB/s, flushes: {}, rejects: {})",
             summary.metrics.records_written,
             summary.metrics.blocks_written,
             elapsed,
             rec_rate,
-            mb_rate
+            mb_rate,
+            summary.metrics.segment_limit_flushes,
+            summary.metrics.segment_limit_record_rejections
         ));
     }
     report_compress_summary(&summary, &output, elapsed, rec_rate, mb_rate)?;
@@ -279,16 +357,20 @@ fn handle_pack(
 fn handle_unpack(
     input: PathBuf,
     output: PathBuf,
-    _ndjson: bool,
-    json_array: bool,
+    force_ndjson: bool,
+    force_json_array: bool,
     show_progress: bool,
 ) -> Result<(), Box<dyn Error>> {
     let start = Instant::now();
-    let format = if json_array {
+    if force_ndjson && force_json_array {
+        return Err("--ndjson and --json-array are mutually exclusive".into());
+    }
+    let format = if force_ndjson {
+        DecompressFormat::Ndjson
+    } else if force_json_array {
         DecompressFormat::JsonArray
     } else {
-        // Default to NDJSON if both flags false or ndjson explicitly true
-        DecompressFormat::Ndjson
+        DecompressFormat::Auto
     };
 
     let request = DecompressRequest {
@@ -325,29 +407,98 @@ fn resolve_input_source(
     path: &Path,
     force_ndjson: bool,
     force_json_array: bool,
-) -> Result<InputSource, Box<dyn Error>> {
+) -> Result<(InputSource, Option<ContainerFormat>), Box<dyn Error>> {
     if force_ndjson && force_json_array {
         return Err("--ndjson and --json-array are mutually exclusive".into());
     }
 
     if force_ndjson {
-        return Ok(InputSource::NdjsonPath(path.to_path_buf()));
+        return Ok((
+            InputSource::NdjsonPath(path.to_path_buf()),
+            Some(ContainerFormat::Ndjson),
+        ));
     }
     if force_json_array {
-        return Ok(InputSource::JsonArrayPath(path.to_path_buf()));
+        return Ok((
+            InputSource::JsonArrayPath(path.to_path_buf()),
+            Some(ContainerFormat::JsonArray),
+        ));
     }
 
-    match path
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .map(|s| s.to_ascii_lowercase())
-    {
-        Some(ext) if ext == "json" => Ok(InputSource::JsonArrayPath(path.to_path_buf())),
-        Some(ext) if ext == "ndjson" || ext == "jsonl" => {
-            Ok(InputSource::NdjsonPath(path.to_path_buf()))
-        }
-        _ => Ok(InputSource::NdjsonPath(path.to_path_buf())),
+    if let Some(format) = detect_container_format(path)? {
+        let source = match format {
+            ContainerFormat::Ndjson => InputSource::NdjsonPath(path.to_path_buf()),
+            ContainerFormat::JsonArray => InputSource::JsonArrayPath(path.to_path_buf()),
+            ContainerFormat::Unknown => {
+                unreachable!("detect_container_format never returns Unknown")
+            }
+        };
+        return Ok((source, Some(format)));
     }
+
+    let format = match path.extension().and_then(|ext| ext.to_str()) {
+        Some(ext) if ext.eq_ignore_ascii_case("json") => ContainerFormat::JsonArray,
+        Some(ext) if ext.eq_ignore_ascii_case("ndjson") || ext.eq_ignore_ascii_case("jsonl") => {
+            ContainerFormat::Ndjson
+        }
+        _ => ContainerFormat::Ndjson,
+    };
+
+    let source = match format {
+        ContainerFormat::Ndjson => InputSource::NdjsonPath(path.to_path_buf()),
+        ContainerFormat::JsonArray => InputSource::JsonArrayPath(path.to_path_buf()),
+        ContainerFormat::Unknown => unreachable!(),
+    };
+
+    Ok((source, Some(format)))
+}
+
+fn detect_container_format(path: &Path) -> Result<Option<ContainerFormat>, Box<dyn Error>> {
+    const DETECTION_LIMIT: usize = 4096;
+    let mut file = File::open(path)?;
+    let mut buffer = Vec::with_capacity(512);
+    let mut chunk = [0u8; 512];
+
+    loop {
+        let read = file.read(&mut chunk)?;
+        if read == 0 {
+            return Ok(None);
+        }
+        buffer.extend_from_slice(&chunk[..read]);
+        if let Some(format) = interpret_leading_bytes(&buffer) {
+            return Ok(Some(format));
+        }
+        if buffer.len() >= DETECTION_LIMIT {
+            break;
+        }
+    }
+
+    Ok(None)
+}
+
+fn interpret_leading_bytes(buf: &[u8]) -> Option<ContainerFormat> {
+    const BOM: [u8; 3] = [0xEF, 0xBB, 0xBF];
+
+    if buf.len() < BOM.len() && buf == &BOM[..buf.len()] {
+        return None;
+    }
+
+    let mut slice = buf;
+    if slice.starts_with(&BOM) {
+        slice = &slice[BOM.len()..];
+    }
+
+    for &byte in slice {
+        match byte {
+            b' ' | b'\t' | b'\r' | b'\n' => continue,
+            b'[' => return Some(ContainerFormat::JsonArray),
+            b'"' | b'-' | b'0'..=b'9' => return Some(ContainerFormat::Ndjson),
+            b'{' => return None,
+            _ => return Some(ContainerFormat::Ndjson),
+        }
+    }
+
+    None
 }
 
 fn report_compress_summary(
@@ -360,14 +511,16 @@ fn report_compress_summary(
     let mut stderr = std::io::stderr().lock();
     writeln!(
         &mut stderr,
-        "Compressed to {} (records: {}, blocks: {}, bytes written: {}, elapsed: {:.2?}, {:.1} rec/s, {:.2} MiB/s)",
+        "Compressed to {} (records: {}, blocks: {}, bytes written: {}, elapsed: {:.2?}, {:.1} rec/s, {:.2} MiB/s, segment flushes: {}, record rejects: {})",
         output.display(),
         summary.metrics.records_written,
         summary.metrics.blocks_written,
         summary.metrics.bytes_written,
         elapsed,
         rec_rate,
-        mb_rate
+        mb_rate,
+        summary.metrics.segment_limit_flushes,
+        summary.metrics.segment_limit_record_rejections
     )?;
     Ok(())
 }
@@ -1292,6 +1445,8 @@ mod tests {
             true,
             false,
             false,
+            None,
+            false,
         )
         .unwrap();
 
@@ -1326,6 +1481,8 @@ mod tests {
             true,
             false,
             false,
+            false,
+            None,
             false,
         )
         .unwrap();
@@ -1465,6 +1622,83 @@ mod tests {
         let block_fields = value["blocks"][0]["fields"].as_array().unwrap();
         assert_eq!(block_fields.len(), 2);
         assert_eq!(block_fields[0]["name"], "a");
+    }
+
+    #[test]
+    fn shortcut_mode_auto_compresses_with_jac_extension() {
+        let data = "{\"id\":1}\n{\"id\":2}\n";
+        let paths = temp_paths("shortcut_test");
+
+        fs::write(&paths.input_ndjson, data).unwrap();
+
+        // Test the shortcut mode by calling handle_pack with auto-generated .jac extension
+        let input_file = paths.input_ndjson.clone();
+        let output_file = input_file.with_extension("jac");
+
+        handle_pack(
+            input_file,
+            output_file.clone(),
+            100000, // default block_records
+            6,      // default zstd_level
+            false,  // canonicalize_keys
+            false,  // canonicalize_numbers
+            4096,   // max_dict_entries
+            true,   // emit_index
+            false,  // force_ndjson
+            false,  // force_json_array
+            false,  // show_progress
+            None,   // max_segment_bytes
+            false,  // allow_large_segments
+        )
+        .unwrap();
+
+        // Verify the .jac file was created
+        assert!(output_file.exists());
+
+        // Verify we can decompress it back
+        handle_unpack(output_file, paths.output_json.clone(), true, false, false).unwrap();
+
+        let result = fs::read_to_string(&paths.output_json).unwrap();
+        assert_eq!(normalize(&result), normalize(data));
+    }
+
+    #[test]
+    fn shortcut_mode_handles_different_file_extensions() {
+        let data = r#"[{"id":1},{"id":2}]"#;
+        let paths = temp_json_paths("shortcut_ext_test");
+
+        fs::write(&paths.input_json, data).unwrap();
+
+        // Test with .json extension -> should create .jac
+        let input_file = paths.input_json.clone();
+        let output_file = input_file.with_extension("jac");
+
+        handle_pack(
+            input_file,
+            output_file.clone(),
+            100000,
+            6,
+            false,
+            false,
+            4096,
+            true,
+            false,
+            false,
+            false,
+            None,
+            false,
+        )
+        .unwrap();
+
+        assert!(output_file.exists());
+
+        // Verify we can decompress it back as JSON array
+        handle_unpack(output_file, paths.output_json.clone(), false, true, false).unwrap();
+
+        let result = fs::read_to_string(&paths.output_json).unwrap();
+        let expected: Value = serde_json::from_str(data).unwrap();
+        let actual: Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(actual, expected);
     }
 
     fn normalize(input: &str) -> Vec<String> {

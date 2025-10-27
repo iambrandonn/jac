@@ -73,12 +73,23 @@ The spec defines: file/container format, block and field segment layouts, encodi
 | Field                        | Type         | Description                                                                 |
 |-----------------------------|--------------|-----------------------------------------------------------------------------|
 | magic                       | [4]u8        | `JAC\x01`                                                                  |
-| flags                       | u32          | Bit 0: canonicalize keys; Bit 1: canonicalize numbers; Bit 2: nested opaque |
+| flags                       | u32          | Bit 0: canonicalize keys; Bit 1: canonicalize numbers; Bit 2: nested opaque; Bits 3-4: container hint (00=unknown, 01=ndjson, 10=json array, 11=reserved) |
 | default_compressor          | u8           | 0=none, **1=zstd**, 2=brotli, 3=deflate (extensible)                       |
 | default_compression_level   | u8           | Codec‑specific level hint (e.g., zstd 1..22)                               |
 | block_size_hint_records     | ULEB128      | OPTIONAL; 0 means unknown                                                  |
 | user_metadata_len           | ULEB128      | Length of optional metadata blob                                           |
-| user_metadata               | bytes        | Opaque; recommended UTF‑8 JSON/CBOR                                        |
+| user_metadata               | bytes        | Opaque; recommended UTF-8 JSON/CBOR                                        |
+
+If present, the `user_metadata` blob MAY contain UTF-8 JSON with the key `segment_max_bytes` (unsigned). Encoders that raise the segment ceiling above the default 64 MiB SHOULD record this value so decoders inheriting default limits can enforce the producer's ceiling.
+
+Bits 3–4 of the `flags` field encode the container format hint observed during compression:
+
+- `00` — Unknown (default; decoders treat as NDJSON when no override is provided)
+- `01` — NDJSON input
+- `10` — JSON array input
+- `11` — Reserved; decoders MUST fail with `UnsupportedFeature`
+
+Decoders use the hint to select a default wrapper when callers do not specify an output format. Implementations MUST still honour explicit caller overrides even when a hint is present.
 
 **Note:** Container **MAY** omit index/footer; decoders **MUST** tolerate streaming scenarios.
 
@@ -299,6 +310,8 @@ fn decompress_full<R: Read, W: Write>(input: R, output: W, opts: DecompressOpts)
 fn project<R: Read, W: Write>(input: R, output: W, fields: &[&str], as_ndjson: bool) -> Result<()>;
 ```
 
+`DecompressFormat` includes an `Auto` variant; when selected the decoder consults the stored container hint (flags bits 3–4) to choose NDJSON vs JSON array output, defaulting to NDJSON when the hint is `Unknown`. Callers can still override the wrapper explicitly with `Ndjson` or `JsonArray` when format conversion is desired.
+
 **Low‑level (block/field):**
 ```rust
 struct JacReader<R> { /* ... */ }
@@ -509,7 +522,8 @@ For field "level" in the sample:
 ⸻
 
 ## 20. Change Log
-	•	0.9 (Draft): Initial archival‑focused, union‑typed columns, per‑field compression, exact decimals, optional index footer.
+	•	0.9 (Draft): Initial archival-focused, union-typed columns, per-field compression, exact decimals, optional index footer.
+	•	0.9.1 (Draft): Allocated header flag bits 3–4 for container-format hints and defined decoder auto-selection behaviour.
 
 
 

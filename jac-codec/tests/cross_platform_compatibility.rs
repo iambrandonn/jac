@@ -5,13 +5,9 @@
 
 use jac_codec::block_builder::BlockBuilder;
 use jac_codec::block_decode::BlockDecoder;
-use jac_codec::{Codec, CompressOpts, DecompressOpts};
+use jac_codec::{Codec, CompressOpts, DecompressOpts, TryAddRecordOutcome};
 use jac_format::{
-    header::FileHeader,
-    block::BlockHeader,
-    types::TypeTag,
-    error::JacError,
-    limits::Limits,
+    block::BlockHeader, error::JacError, header::FileHeader, limits::Limits, types::TypeTag,
 };
 use serde_json::{Map, Value};
 
@@ -38,7 +34,15 @@ fn test_endianness_compatibility() {
 
     let mut block_builder = BlockBuilder::new(opts.clone());
     for record in records {
-        block_builder.add_record(record).unwrap();
+        match block_builder
+            .try_add_record(record)
+            .expect("try add record")
+        {
+            TryAddRecordOutcome::Added => {}
+            TryAddRecordOutcome::BlockFull { .. } => {
+                panic!("unexpected block flush in endianness test")
+            }
+        }
     }
 
     let block_data = block_builder.finalize().unwrap();
@@ -137,7 +141,10 @@ fn test_type_tag_compatibility() {
     if let Err(JacError::UnsupportedFeature(msg)) = result {
         assert!(msg.contains("Reserved type tag 7"));
     } else {
-        panic!("Expected UnsupportedFeature for reserved tag, got: {:?}", result);
+        panic!(
+            "Expected UnsupportedFeature for reserved tag, got: {:?}",
+            result
+        );
     }
 }
 
@@ -168,7 +175,15 @@ fn test_compression_codec_compatibility() {
 
         let mut block_builder = BlockBuilder::new(opts);
         for record in records {
-            block_builder.add_record(record).unwrap();
+            match block_builder
+                .try_add_record(record)
+                .expect("try add record")
+            {
+                TryAddRecordOutcome::Added => {}
+                TryAddRecordOutcome::BlockFull { .. } => {
+                    panic!("unexpected block flush in codec compatibility test")
+                }
+            }
         }
 
         let result = block_builder.finalize();
@@ -251,8 +266,14 @@ fn test_file_header_cross_platform() {
 
         assert_eq!(decoded.flags, header.flags);
         assert_eq!(decoded.default_compressor, header.default_compressor);
-        assert_eq!(decoded.default_compression_level, header.default_compression_level);
-        assert_eq!(decoded.block_size_hint_records, header.block_size_hint_records);
+        assert_eq!(
+            decoded.default_compression_level,
+            header.default_compression_level
+        );
+        assert_eq!(
+            decoded.block_size_hint_records,
+            header.block_size_hint_records
+        );
         assert_eq!(decoded.user_metadata, header.user_metadata);
 
         // Verify we consumed all bytes
@@ -279,7 +300,7 @@ fn test_block_header_cross_platform() {
                 compressor: 1,
                 compression_level: 15,
                 presence_bytes: 13, // ceil(100/8)
-                tag_bytes: 38, // ceil(3*100/8)
+                tag_bytes: 38,      // ceil(3*100/8)
                 value_count_present: 100,
                 encoding_flags: 0,
                 dict_entry_count: 0,
@@ -297,7 +318,7 @@ fn test_block_header_cross_platform() {
                     compressor: 1,
                     compression_level: 15,
                     presence_bytes: 125, // ceil(1000/8)
-                    tag_bytes: 375, // ceil(3*1000/8)
+                    tag_bytes: 375,      // ceil(3*1000/8)
                     value_count_present: 1000,
                     encoding_flags: 1, // dictionary
                     dict_entry_count: 10,
@@ -329,18 +350,64 @@ fn test_block_header_cross_platform() {
         assert_eq!(decoded.record_count, header.record_count);
         assert_eq!(decoded.fields.len(), header.fields.len());
 
-        for (i, (decoded_field, original_field)) in decoded.fields.iter().zip(header.fields.iter()).enumerate() {
-            assert_eq!(decoded_field.field_name, original_field.field_name, "Field {} name mismatch", i);
-            assert_eq!(decoded_field.compressor, original_field.compressor, "Field {} compressor mismatch", i);
-            assert_eq!(decoded_field.compression_level, original_field.compression_level, "Field {} compression_level mismatch", i);
-            assert_eq!(decoded_field.presence_bytes, original_field.presence_bytes, "Field {} presence_bytes mismatch", i);
-            assert_eq!(decoded_field.tag_bytes, original_field.tag_bytes, "Field {} tag_bytes mismatch", i);
-            assert_eq!(decoded_field.value_count_present, original_field.value_count_present, "Field {} value_count_present mismatch", i);
-            assert_eq!(decoded_field.encoding_flags, original_field.encoding_flags, "Field {} encoding_flags mismatch", i);
-            assert_eq!(decoded_field.dict_entry_count, original_field.dict_entry_count, "Field {} dict_entry_count mismatch", i);
-            assert_eq!(decoded_field.segment_uncompressed_len, original_field.segment_uncompressed_len, "Field {} segment_uncompressed_len mismatch", i);
-            assert_eq!(decoded_field.segment_compressed_len, original_field.segment_compressed_len, "Field {} segment_compressed_len mismatch", i);
-            assert_eq!(decoded_field.segment_offset, original_field.segment_offset, "Field {} segment_offset mismatch", i);
+        for (i, (decoded_field, original_field)) in
+            decoded.fields.iter().zip(header.fields.iter()).enumerate()
+        {
+            assert_eq!(
+                decoded_field.field_name, original_field.field_name,
+                "Field {} name mismatch",
+                i
+            );
+            assert_eq!(
+                decoded_field.compressor, original_field.compressor,
+                "Field {} compressor mismatch",
+                i
+            );
+            assert_eq!(
+                decoded_field.compression_level, original_field.compression_level,
+                "Field {} compression_level mismatch",
+                i
+            );
+            assert_eq!(
+                decoded_field.presence_bytes, original_field.presence_bytes,
+                "Field {} presence_bytes mismatch",
+                i
+            );
+            assert_eq!(
+                decoded_field.tag_bytes, original_field.tag_bytes,
+                "Field {} tag_bytes mismatch",
+                i
+            );
+            assert_eq!(
+                decoded_field.value_count_present, original_field.value_count_present,
+                "Field {} value_count_present mismatch",
+                i
+            );
+            assert_eq!(
+                decoded_field.encoding_flags, original_field.encoding_flags,
+                "Field {} encoding_flags mismatch",
+                i
+            );
+            assert_eq!(
+                decoded_field.dict_entry_count, original_field.dict_entry_count,
+                "Field {} dict_entry_count mismatch",
+                i
+            );
+            assert_eq!(
+                decoded_field.segment_uncompressed_len, original_field.segment_uncompressed_len,
+                "Field {} segment_uncompressed_len mismatch",
+                i
+            );
+            assert_eq!(
+                decoded_field.segment_compressed_len, original_field.segment_compressed_len,
+                "Field {} segment_compressed_len mismatch",
+                i
+            );
+            assert_eq!(
+                decoded_field.segment_offset, original_field.segment_offset,
+                "Field {} segment_offset mismatch",
+                i
+            );
         }
 
         // Verify we consumed all bytes
@@ -377,7 +444,15 @@ fn test_spec_conformance_cross_platform() {
 
     let mut block_builder = BlockBuilder::new(opts.clone());
     for record in &records {
-        block_builder.add_record(record.clone()).unwrap();
+        match block_builder
+            .try_add_record(record.clone())
+            .expect("try add record")
+        {
+            TryAddRecordOutcome::Added => {}
+            TryAddRecordOutcome::BlockFull { .. } => {
+                panic!("unexpected block flush in spec conformance test")
+            }
+        }
     }
 
     let block_data = block_builder.finalize().unwrap();
@@ -415,12 +490,7 @@ fn test_spec_conformance_cross_platform() {
     let bob = Value::String("bob".to_string());
     let carol = Value::String("carol".to_string());
 
-    let expected_users = vec![
-        Some(&alice1),
-        Some(&alice2),
-        Some(&bob),
-        Some(&carol),
-    ];
+    let expected_users = vec![Some(&alice1), Some(&alice2), Some(&bob), Some(&carol)];
 
     assert_eq!(user_values, expected_users);
 }
@@ -428,7 +498,10 @@ fn test_spec_conformance_cross_platform() {
 /// Helper function to create test records
 fn create_test_record(id_value: i64, value_field: &str) -> Map<String, Value> {
     let mut record = Map::new();
-    record.insert("id".to_string(), Value::Number(serde_json::Number::from(id_value)));
+    record.insert(
+        "id".to_string(),
+        Value::Number(serde_json::Number::from(id_value)),
+    );
     record.insert("value".to_string(), Value::String(value_field.to_string()));
     record
 }

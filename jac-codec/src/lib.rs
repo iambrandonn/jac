@@ -22,7 +22,7 @@ pub use jac_format::{
 };
 
 // Re-export our own types
-pub use block_builder::{BlockBuilder, BlockData};
+pub use block_builder::{BlockBuilder, BlockData, TryAddRecordOutcome};
 pub use block_decode::{BlockDecoder, DecompressOpts};
 pub use column::{ColumnBuilder, FieldSegment};
 pub use segment::FieldSegment as Segment;
@@ -53,7 +53,7 @@ impl Default for CompressOpts {
     fn default() -> Self {
         Self {
             block_target_records: 100_000,
-            default_codec: Codec::Zstd(15),
+            default_codec: Codec::Zstd(6),
             canonicalize_keys: false,
             canonicalize_numbers: false,
             nested_opaque: true, // Must be true in v1

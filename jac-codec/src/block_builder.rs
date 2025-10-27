@@ -1,6 +1,6 @@
 //! Block builder for aggregating columns
 
-use crate::{ColumnBuilder, CompressOpts};
+use crate::{column::ColumnContribution, ColumnBuilder, CompressOpts};
 use jac_format::{checksum::compute_crc32c, BlockHeader, FieldDirectoryEntry, JacError, Result};
 use serde_json;
 use std::collections::HashMap;
@@ -17,6 +17,22 @@ pub struct BlockBuilder {
     column_builders: HashMap<String, ColumnBuilder>,
     /// Current memory usage estimate
     estimated_memory: usize,
+    /// Number of times segment limit forced an early flush
+    segment_limit_flushes: usize,
+    /// Number of times a single record exceeded segment limit
+    segment_limit_record_rejections: usize,
+}
+
+/// Result of attempting to add a record to the current block.
+#[derive(Debug)]
+pub enum TryAddRecordOutcome {
+    /// Record was added successfully to the current block.
+    Added,
+    /// Current block must be flushed before adding the record; contains the original record.
+    BlockFull {
+        /// Record that needs to be retried after flushing the current block.
+        record: serde_json::Map<String, serde_json::Value>,
+    },
 }
 
 impl BlockBuilder {
@@ -28,26 +44,116 @@ impl BlockBuilder {
             field_names: Vec::new(),
             column_builders: HashMap::new(),
             estimated_memory: 0,
+            segment_limit_flushes: 0,
+            segment_limit_record_rejections: 0,
         }
     }
 
-    /// Add record to block
-    pub fn add_record(&mut self, rec: serde_json::Map<String, serde_json::Value>) -> Result<()> {
-        // Check if block is full
+    /// Attempt to add a record to the block, returning whether it fit or requires flushing.
+    pub fn try_add_record(
+        &mut self,
+        rec: serde_json::Map<String, serde_json::Value>,
+    ) -> Result<TryAddRecordOutcome> {
+        // Quick check for target record count or block memory before deeper analysis.
         if self.is_full() {
-            return Err(JacError::Internal("Block is full".to_string()));
+            return Ok(TryAddRecordOutcome::BlockFull { record: rec });
         }
 
-        let record_idx = self.records.len();
-        self.records.push(rec);
+        let limits = &self.opts.limits;
+        let max_segment_len = limits.max_segment_uncompressed_len;
+        let current_record_count = self.records.len();
+        let next_record_count = current_record_count + 1;
 
-        // Discover new fields and add values to column builders
-        for (field_name, value) in &self.records[record_idx] {
+        let record = rec;
+        let mut existing_contribs: HashMap<String, ColumnContribution> = HashMap::new();
+        let mut new_field_contribs: HashMap<String, ColumnContribution> = HashMap::new();
+
+        // Precompute contributions for fields present in this record.
+        for (field_name, value) in &record {
+            if let Some(builder) = self.column_builders.get(field_name) {
+                let contrib = builder.contribution_for_value(value)?;
+                let single_upper = builder.estimated_single_value_upper_bound(value)?;
+                if single_upper > max_segment_len {
+                    self.segment_limit_record_rejections += 1;
+                    return Err(JacError::LimitExceeded(format!(
+                        "Field '{}' single-record payload ({} bytes) exceeds max_segment_uncompressed_len ({})",
+                        field_name, single_upper, max_segment_len
+                    )));
+                }
+                existing_contribs.insert(field_name.clone(), contrib);
+            } else {
+                let temp_builder = ColumnBuilder::new(self.opts.block_target_records, &self.opts);
+                let contrib = temp_builder.contribution_for_value(value)?;
+                let single_upper = temp_builder.estimated_single_value_upper_bound(value)?;
+                if single_upper > max_segment_len {
+                    self.segment_limit_record_rejections += 1;
+                    return Err(JacError::LimitExceeded(format!(
+                        "Field '{}' single-record payload ({} bytes) exceeds max_segment_uncompressed_len ({})",
+                        field_name, single_upper, max_segment_len
+                    )));
+                }
+                new_field_contribs.insert(field_name.clone(), contrib);
+            }
+        }
+
+        // Evaluate existing fields (including those absent in this record) for projected size.
+        for (field_name, builder) in &self.column_builders {
+            let contrib = existing_contribs
+                .get(field_name)
+                .cloned()
+                .unwrap_or_default();
+            let projected = builder.estimated_uncompressed_size_with(&contrib, next_record_count);
+            if projected > max_segment_len {
+                if current_record_count == 0 {
+                    self.segment_limit_record_rejections += 1;
+                    return Err(JacError::LimitExceeded(format!(
+                        "Field '{}' segment ({}) exceeds max_segment_uncompressed_len ({})",
+                        field_name, projected, max_segment_len
+                    )));
+                } else {
+                    self.segment_limit_flushes += 1;
+                    return Ok(TryAddRecordOutcome::BlockFull { record });
+                }
+            }
+        }
+
+        // Evaluate new fields similarly (no existing state).
+        for (field_name, contrib) in &new_field_contribs {
+            let presence_bytes = (next_record_count + 7) >> 3;
+            let tag_bytes = ((3 * contrib.present_delta) + 7) >> 3;
+            let bool_bytes = ((contrib.bool_delta) + 7) >> 3;
+            let projected = presence_bytes
+                + tag_bytes
+                + bool_bytes
+                + contrib.int_encoded_bytes
+                + contrib.decimal_encoded_bytes
+                + contrib.string_raw_bytes
+                + contrib.object_raw_bytes
+                + contrib.array_raw_bytes;
+            if projected > max_segment_len {
+                if current_record_count == 0 {
+                    self.segment_limit_record_rejections += 1;
+                    return Err(JacError::LimitExceeded(format!(
+                        "Field '{}' segment ({}) exceeds max_segment_uncompressed_len ({})",
+                        field_name, projected, max_segment_len
+                    )));
+                } else {
+                    self.segment_limit_flushes += 1;
+                    return Ok(TryAddRecordOutcome::BlockFull { record });
+                }
+            }
+        }
+
+        // All checks passed; commit record.
+        let record_memory = self.estimate_record_memory(&record);
+        let record_idx = self.records.len();
+        self.records.push(record.clone());
+
+        for (field_name, value) in &record {
             if !self.field_names.contains(field_name) {
                 self.field_names.push(field_name.clone());
             }
 
-            // Get or create column builder for this field
             let block_target_records = self.opts.block_target_records;
             let opts_clone = self.opts.clone();
             let column_builder = self
@@ -55,14 +161,12 @@ impl BlockBuilder {
                 .entry(field_name.clone())
                 .or_insert_with(move || ColumnBuilder::new(block_target_records, &opts_clone));
 
-            // Add value to column
             column_builder.add_value(record_idx, value)?;
         }
 
-        // Update memory estimate
-        self.estimated_memory += self.estimate_record_memory(&self.records[record_idx]);
+        self.estimated_memory += record_memory;
 
-        Ok(())
+        Ok(TryAddRecordOutcome::Added)
     }
 
     /// Check if block is full
@@ -74,6 +178,16 @@ impl BlockBuilder {
     /// Get current record count
     pub fn record_count(&self) -> usize {
         self.records.len()
+    }
+
+    /// Number of times segment limit triggered a flush suggestion.
+    pub fn segment_limit_flushes(&self) -> usize {
+        self.segment_limit_flushes
+    }
+
+    /// Number of records rejected because a single field exceeded the segment limit.
+    pub fn segment_limit_record_rejections(&self) -> usize {
+        self.segment_limit_record_rejections
     }
 
     /// Finalize block and create block data
@@ -192,6 +306,18 @@ mod tests {
     use crate::Codec;
     use serde_json::json;
 
+    fn add_record_expect_added(
+        builder: &mut BlockBuilder,
+        record: serde_json::Map<String, serde_json::Value>,
+    ) {
+        match builder.try_add_record(record).expect("try add record") {
+            TryAddRecordOutcome::Added => {}
+            TryAddRecordOutcome::BlockFull { .. } => {
+                panic!("unexpected block flush during test")
+            }
+        }
+    }
+
     #[test]
     fn test_block_builder_basic() {
         let opts = CompressOpts::default();
@@ -201,12 +327,12 @@ mod tests {
         let mut record1 = serde_json::Map::new();
         record1.insert("id".to_string(), json!(1));
         record1.insert("name".to_string(), json!("alice"));
-        builder.add_record(record1).unwrap();
+        add_record_expect_added(&mut builder, record1);
 
         let mut record2 = serde_json::Map::new();
         record2.insert("id".to_string(), json!(2));
         record2.insert("name".to_string(), json!("bob"));
-        builder.add_record(record2).unwrap();
+        add_record_expect_added(&mut builder, record2);
 
         let block_data = builder.finalize().unwrap();
         assert_eq!(block_data.header.record_count, 2);
@@ -223,11 +349,11 @@ mod tests {
         // Add records with schema drift (field changes type)
         let mut record1 = serde_json::Map::new();
         record1.insert("value".to_string(), json!(42)); // integer
-        builder.add_record(record1).unwrap();
+        add_record_expect_added(&mut builder, record1);
 
         let mut record2 = serde_json::Map::new();
         record2.insert("value".to_string(), json!("hello")); // string
-        builder.add_record(record2).unwrap();
+        add_record_expect_added(&mut builder, record2);
 
         let block_data = builder.finalize().unwrap();
         assert_eq!(block_data.header.record_count, 2);
@@ -244,12 +370,12 @@ mod tests {
         let mut record1 = serde_json::Map::new();
         record1.insert("id".to_string(), json!(1));
         record1.insert("name".to_string(), json!("alice"));
-        builder.add_record(record1).unwrap();
+        add_record_expect_added(&mut builder, record1);
 
         let mut record2 = serde_json::Map::new();
         record2.insert("id".to_string(), json!(2));
         // Missing "name" field
-        builder.add_record(record2).unwrap();
+        add_record_expect_added(&mut builder, record2);
 
         let block_data = builder.finalize().unwrap();
         assert_eq!(block_data.header.record_count, 2);
@@ -268,7 +394,7 @@ mod tests {
         record.insert("zebra".to_string(), json!("last"));
         record.insert("apple".to_string(), json!("first"));
         record.insert("banana".to_string(), json!("middle"));
-        builder.add_record(record).unwrap();
+        add_record_expect_added(&mut builder, record);
 
         let block_data = builder.finalize().unwrap();
         assert_eq!(block_data.header.record_count, 1);
@@ -291,7 +417,7 @@ mod tests {
 
         let mut record = serde_json::Map::new();
         record.insert("value".to_string(), json!(1));
-        builder.add_record(record).unwrap();
+        add_record_expect_added(&mut builder, record);
 
         let err = builder.finalize().unwrap_err();
         assert!(matches!(err, JacError::UnsupportedCompression(2)));
@@ -305,10 +431,61 @@ mod tests {
 
         let mut record = serde_json::Map::new();
         record.insert("value".to_string(), json!(1));
-        builder.add_record(record).unwrap();
+        add_record_expect_added(&mut builder, record);
 
         let err = builder.finalize().unwrap_err();
         assert!(matches!(err, JacError::UnsupportedCompression(3)));
+    }
+
+    #[test]
+    fn try_add_record_signals_block_full_on_segment_limit() {
+        let mut opts = CompressOpts::default();
+        opts.block_target_records = 10;
+        opts.default_codec = Codec::None;
+        opts.limits.max_segment_uncompressed_len = 38;
+
+        let mut builder = BlockBuilder::new(opts.clone());
+
+        let mut small = serde_json::Map::new();
+        small.insert("field".to_string(), json!("short"));
+        add_record_expect_added(&mut builder, small);
+
+        let mut large = serde_json::Map::new();
+        large.insert("field".to_string(), json!("012345678901234567890123456789"));
+
+        match builder
+            .try_add_record(large.clone())
+            .expect("try add record")
+        {
+            TryAddRecordOutcome::Added => panic!("expected BlockFull outcome"),
+            TryAddRecordOutcome::BlockFull { record } => {
+                assert_eq!(record.get("field"), large.get("field"));
+            }
+        }
+
+        assert_eq!(builder.segment_limit_flushes(), 1);
+    }
+
+    #[test]
+    fn try_add_record_rejects_single_record_exceeding_limit() {
+        let mut opts = CompressOpts::default();
+        opts.block_target_records = 10;
+        opts.default_codec = Codec::None;
+        opts.limits.max_segment_uncompressed_len = 16;
+
+        let mut builder = BlockBuilder::new(opts);
+
+        let mut record = serde_json::Map::new();
+        record.insert(
+            "field".to_string(),
+            json!("this string is far too long to fit"),
+        );
+
+        let err = builder
+            .try_add_record(record)
+            .expect_err("expected limit exceeded");
+        assert!(matches!(err, JacError::LimitExceeded(_)));
+        assert_eq!(builder.segment_limit_record_rejections(), 1);
     }
 
     #[test]
