@@ -461,3 +461,63 @@ fn spec_fixture_cli_conformance() -> Result<(), Box<dyn Error>> {
 
     Ok(())
 }
+
+#[test]
+fn segment_limit_error_message_is_helpful() -> Result<(), Box<dyn Error>> {
+    let dir = tempfile::tempdir()?;
+    let input_path = dir.path().join("input.ndjson");
+    let output_path = dir.path().join("output.jac");
+
+    // Create a record with a large field (1 MiB string)
+    let large_value = "x".repeat(1024 * 1024);
+    let record = serde_json::json!({"large_field": large_value});
+    fs::write(&input_path, format!("{}\n", record.to_string()))?;
+
+    // Try to pack with a very small segment limit (will fail)
+    let result = assert_cmd::Command::cargo_bin("jac")?
+        .args([
+            "pack",
+            input_path.to_str().unwrap(),
+            "-o",
+            output_path.to_str().unwrap(),
+            "--max-segment-bytes",
+            "512000", // 500 KiB - too small for 1 MiB field
+            "--allow-large-segments",
+        ])
+        .assert()
+        .failure();
+
+    // Verify the error message contains helpful information
+    let output = result.get_output();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // Should mention the field name
+    assert!(
+        stderr.contains("large_field"),
+        "Error should mention field name 'large_field', got: {}",
+        stderr
+    );
+
+    // Should mention that it's a single-record payload issue
+    assert!(
+        stderr.contains("single-record payload"),
+        "Error should mention 'single-record payload', got: {}",
+        stderr
+    );
+
+    // Should provide recommendation with --max-segment-bytes
+    assert!(
+        stderr.contains("--max-segment-bytes"),
+        "Error should suggest --max-segment-bytes, got: {}",
+        stderr
+    );
+
+    // Should warn about risks
+    assert!(
+        stderr.contains("WARNING") || stderr.contains("Warning"),
+        "Error should contain warning about risks, got: {}",
+        stderr
+    );
+
+    Ok(())
+}

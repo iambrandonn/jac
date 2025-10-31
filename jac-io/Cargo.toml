@@ -28,3 +28,16 @@ tokio = { version = "1.37", optional = true, features = ["rt", "rt-multi-thread"
 proptest.workspace = true
 jac-test-utils = { path = "../jac-test-utils" }
 tempfile = "3.8"
+criterion.workspace = true
+
+[[bench]]
+name = "compression"
+harness = false
+
+[[bench]]
+name = "early_flush"
+harness = false
+
+[[bench]]
+name = "decode"
+harness = false

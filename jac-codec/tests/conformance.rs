@@ -46,8 +46,8 @@ fn build_spec_block() -> (BlockData, Vec<Map<String, Value>>) {
         }
     }
 
-    let block = builder.finalize().expect("finalize block");
-    (block, records)
+    let block_finish = builder.finalize().expect("finalize block");
+    (block_finish.data, records)
 }
 
 fn assemble_block_bytes(block: &BlockData) -> Vec<u8> {
@@ -183,7 +183,7 @@ fn schema_drift_validation() {
         }
     }
 
-    let block = builder.finalize().expect("finalize block");
+    let block = builder.finalize().expect("finalize block").data;
     let bytes = assemble_block_bytes(&block);
     let decoder = BlockDecoder::new(&bytes, &DecompressOpts::default()).expect("decode block");
 
@@ -279,7 +279,7 @@ fn deeply_nested_structures() {
         }
     }
 
-    let block = builder.finalize().expect("finalize block");
+    let block = builder.finalize().expect("finalize block").data;
     let bytes = assemble_block_bytes(&block);
     let decoder = BlockDecoder::new(&bytes, &DecompressOpts::default()).expect("decode block");
     let decoded_records = decoder.decode_records().expect("decode records");
@@ -339,7 +339,7 @@ fn high_precision_decimals() {
         }
     }
 
-    let block = builder.finalize().expect("finalize block");
+    let block = builder.finalize().expect("finalize block").data;
     let bytes = assemble_block_bytes(&block);
     let decoder = BlockDecoder::new(&bytes, &DecompressOpts::default()).expect("decode block");
     let decoded_records = decoder.decode_records().expect("decode records");
@@ -384,7 +384,7 @@ fn empty_and_single_record_files() {
         }
     }
 
-    let block = builder.finalize().expect("finalize block");
+    let block = builder.finalize().expect("finalize block").data;
     let bytes = assemble_block_bytes(&block);
     let decoder = BlockDecoder::new(&bytes, &DecompressOpts::default()).expect("decode block");
     let decoded_records = decoder.decode_records().expect("decode records");
@@ -429,7 +429,7 @@ fn large_synthetic_block() {
         }
     }
 
-    let block = builder.finalize().expect("finalize block");
+    let block = builder.finalize().expect("finalize block").data;
     let bytes = assemble_block_bytes(&block);
     let decoder = BlockDecoder::new(&bytes, &DecompressOpts::default()).expect("decode block");
     let decoded_records = decoder.decode_records().expect("decode records");
@@ -490,7 +490,7 @@ fn unicode_edge_cases() {
         }
     }
 
-    let block = builder.finalize().expect("finalize block");
+    let block = builder.finalize().expect("finalize block").data;
     let bytes = assemble_block_bytes(&block);
     let decoder = BlockDecoder::new(&bytes, &DecompressOpts::default()).expect("decode block");
     let decoded_records = decoder.decode_records().expect("decode records");
@@ -542,7 +542,7 @@ fn boundary_values_and_edge_cases() {
         }
     }
 
-    let block = builder.finalize().expect("finalize block");
+    let block = builder.finalize().expect("finalize block").data;
     let bytes = assemble_block_bytes(&block);
     let decoder = BlockDecoder::new(&bytes, &DecompressOpts::default()).expect("decode block");
     let decoded_records = decoder.decode_records().expect("decode records");

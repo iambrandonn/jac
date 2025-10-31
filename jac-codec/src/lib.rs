@@ -22,7 +22,7 @@ pub use jac_format::{
 };
 
 // Re-export our own types
-pub use block_builder::{BlockBuilder, BlockData, TryAddRecordOutcome};
+pub use block_builder::{BlockBuilder, BlockData, BlockFinish, TryAddRecordOutcome};
 pub use block_decode::{BlockDecoder, DecompressOpts};
 pub use column::{ColumnBuilder, FieldSegment};
 pub use segment::FieldSegment as Segment;

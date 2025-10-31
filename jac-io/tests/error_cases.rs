@@ -42,7 +42,7 @@ fn build_block(records: &[Value]) -> (FileHeader, BlockHeader, Vec<Vec<u8>>) {
 
     let BlockData {
         header, segments, ..
-    } = builder.finalize().expect("finalize block");
+    } = builder.finalize().expect("finalize block").data;
 
     let file_header = FileHeader {
         flags: FLAG_NESTED_OPAQUE,

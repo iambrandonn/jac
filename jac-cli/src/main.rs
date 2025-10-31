@@ -21,6 +21,75 @@ use std::io::{BufWriter, Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+/// Error context extracted from a segment limit error message.
+#[derive(Debug)]
+struct SegmentLimitError {
+    field_name: String,
+    observed_size: usize,
+    limit: usize,
+}
+
+impl SegmentLimitError {
+    /// Parse a LimitExceeded error message to extract field-specific context.
+    /// Returns None if the error is not a segment limit error.
+    fn from_jac_error(msg: &str) -> Option<Self> {
+        // Parse: "Field 'X' single-record payload (Y bytes) exceeds max_segment_uncompressed_len (Z)"
+        if !msg.contains("single-record payload") {
+            return None;
+        }
+
+        // Extract field name between 'Field '' and '' single-record'
+        let field_name = msg
+            .split("Field '")
+            .nth(1)?
+            .split("' single-record")
+            .next()?
+            .to_string();
+
+        // Extract observed size: find "payload (" then extract number before " bytes)"
+        let observed_size = msg
+            .split("payload (")
+            .nth(1)?
+            .split(" bytes)")
+            .next()?
+            .parse::<usize>()
+            .ok()?;
+
+        // Extract limit: find "max_segment_uncompressed_len (" then extract number before ")"
+        let limit = msg
+            .split("max_segment_uncompressed_len (")
+            .nth(1)?
+            .split(')')
+            .next()?
+            .parse::<usize>()
+            .ok()?;
+
+        Some(Self {
+            field_name,
+            observed_size,
+            limit,
+        })
+    }
+}
+
+/// Compute recommended block size to avoid segment limit issues.
+/// Uses a 10% safety margin to account for encoding overhead.
+fn compute_recommended_block_size(
+    current_records: u64,
+    segment_limit: usize,
+    max_segment_observed: usize,
+) -> usize {
+    if max_segment_observed == 0 || current_records == 0 {
+        return 1000; // Fallback minimum
+    }
+
+    let records = current_records.max(1);
+    let ratio = segment_limit as f64 / max_segment_observed as f64;
+    let recommended = (records as f64 * ratio * 0.9).ceil() as usize;
+
+    recommended.max(1000) // Minimum 1000 records
+}
+
 #[derive(Parser)]
 #[command(name = "jac")]
 #[command(about = "JSON-Aware Compression CLI tool")]
@@ -76,6 +145,9 @@ enum Commands {
         /// Confirm raising segment limits above the default 64 MiB ceiling
         #[arg(long = "allow-large-segments")]
         allow_large_segments: bool,
+        /// Display per-field metrics in summary (flush/rejection counts, max segment sizes)
+        #[arg(long = "verbose-metrics")]
+        verbose_metrics: bool,
     },
     /// Decompress .jac to JSON/NDJSON
     Unpack {
@@ -187,6 +259,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             false,  // show_progress
             None,   // max_segment_bytes
             false,  // allow_large_segments
+            false,  // verbose_metrics
         )?;
         return Ok(());
     }
@@ -207,6 +280,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             progress,
             max_segment_bytes,
             allow_large_segments,
+            verbose_metrics,
         }) => {
             handle_pack(
                 input,
@@ -222,6 +296,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 progress,
                 max_segment_bytes,
                 allow_large_segments,
+                verbose_metrics,
             )?;
         }
         Some(Commands::Unpack {
@@ -287,6 +362,7 @@ fn handle_pack(
     show_progress: bool,
     max_segment_bytes: Option<u64>,
     allow_large_segments: bool,
+    verbose_metrics: bool,
 ) -> Result<(), Box<dyn Error>> {
     let start = Instant::now();
     let mut limits = Limits::default();
@@ -312,6 +388,9 @@ fn handle_pack(
         limits.max_segment_uncompressed_len = bytes as usize;
     }
 
+    // Store segment limit before moving limits into options
+    let segment_limit = limits.max_segment_uncompressed_len;
+
     let (input_source, container_hint) =
         resolve_input_source(&input, force_ndjson, force_json_array)?;
     let options = CompressOptions {
@@ -333,7 +412,47 @@ fn handle_pack(
     };
 
     let mut progress_bar = show_progress.then(|| create_spinner("Compressing records"));
-    let summary = execute_compress(request)?;
+
+    // Execute compression with enhanced error handling for segment limits
+    let summary = match execute_compress(request) {
+        Ok(s) => s,
+        Err(jac_io::JacError::LimitExceeded(ref msg)) => {
+            // Drop progress bar before printing error messages
+            if let Some(pb) = progress_bar.take() {
+                pb.finish_and_clear();
+            }
+
+            // Try to parse segment limit error for helpful diagnostics
+            if let Some(ctx) = SegmentLimitError::from_jac_error(msg) {
+                let observed_mib = ctx.observed_size as f64 / (1024.0 * 1024.0);
+                let limit_mib = ctx.limit as f64 / (1024.0 * 1024.0);
+
+                eprintln!("\nERROR: Field '{}' single-record payload exceeds segment limit", ctx.field_name);
+                eprintln!("  Observed: {:.2} MiB", observed_mib);
+                eprintln!("  Limit:    {:.2} MiB", limit_mib);
+                eprintln!();
+                eprintln!("This record cannot be encoded with the current segment limit.");
+                eprintln!();
+                eprintln!("Recommended solutions:");
+                eprintln!("  1. Increase the segment limit (advanced, use with caution):");
+                eprintln!("     jac pack --max-segment-bytes {} --allow-large-segments {} -o {}",
+                    (ctx.observed_size * 2).max(128 * 1024 * 1024),
+                    input.display(),
+                    output.display());
+                eprintln!();
+                eprintln!("  2. Modify your data to reduce field sizes:");
+                eprintln!("     - Split large nested objects into multiple records");
+                eprintln!("     - Store large blobs externally and reference by ID");
+                eprintln!("     - Compress data before encoding");
+                eprintln!();
+                eprintln!("WARNING: Raising limits above 64 MiB increases memory usage and DoS risk.");
+            }
+
+            return Err(format!("Segment limit exceeded: {}", msg).into());
+        }
+        Err(e) => return Err(e.into()),
+    };
+
     let elapsed = start.elapsed();
     let secs = elapsed.as_secs_f64().max(f64::EPSILON);
     let rec_rate = summary.metrics.records_written as f64 / secs;
@@ -350,7 +469,16 @@ fn handle_pack(
             summary.metrics.segment_limit_record_rejections
         ));
     }
-    report_compress_summary(&summary, &output, elapsed, rec_rate, mb_rate)?;
+    report_compress_summary(
+        &summary,
+        &output,
+        elapsed,
+        rec_rate,
+        mb_rate,
+        verbose_metrics,
+        block_records,
+        segment_limit,
+    )?;
     Ok(())
 }
 
@@ -507,6 +635,9 @@ fn report_compress_summary(
     elapsed: Duration,
     rec_rate: f64,
     mb_rate: f64,
+    verbose_metrics: bool,
+    block_records: usize,
+    segment_limit: usize,
 ) -> Result<(), Box<dyn Error>> {
     let mut stderr = std::io::stderr().lock();
     writeln!(
@@ -522,6 +653,69 @@ fn report_compress_summary(
         summary.metrics.segment_limit_flushes,
         summary.metrics.segment_limit_record_rejections
     )?;
+
+    // Display per-field metrics if verbose
+    if verbose_metrics && !summary.metrics.per_field_metrics.is_empty() {
+        writeln!(&mut stderr, "\nPer-field metrics:")?;
+
+        // Collect and sort by total impact (flushes + rejections)
+        let mut field_metrics: Vec<_> = summary.metrics.per_field_metrics.iter().collect();
+        field_metrics.sort_by(|a, b| {
+            let impact_a = a.1.flush_count + a.1.rejection_count;
+            let impact_b = b.1.flush_count + b.1.rejection_count;
+            impact_b.cmp(&impact_a) // Descending order (most impact first)
+        });
+
+        for (field_name, metrics) in field_metrics {
+            let max_mb = metrics.max_segment_size_seen as f64 / (1024.0 * 1024.0);
+            writeln!(
+                &mut stderr,
+                "  Field '{}': {} flushes, {} rejections, max segment {:.2} MiB",
+                field_name, metrics.flush_count, metrics.rejection_count, max_mb
+            )?;
+        }
+    }
+
+    // Display block-size recommendation if early flushes occurred
+    if summary.metrics.segment_limit_flushes > 0 {
+        // Find the maximum segment size across all fields
+        let max_segment_observed = summary
+            .metrics
+            .per_field_metrics
+            .values()
+            .map(|m| m.max_segment_size_seen)
+            .max()
+            .unwrap_or(0);
+
+        if max_segment_observed > 0 {
+            let recommended = compute_recommended_block_size(
+                summary.metrics.records_written,
+                segment_limit,
+                max_segment_observed,
+            );
+
+            let segment_limit_mb = segment_limit as f64 / (1024.0 * 1024.0);
+            let max_observed_mb = max_segment_observed as f64 / (1024.0 * 1024.0);
+
+            writeln!(&mut stderr)?;
+            writeln!(
+                &mut stderr,
+                "⚠️  Early block flushes detected ({} times) due to segment size limits.",
+                summary.metrics.segment_limit_flushes
+            )?;
+            writeln!(
+                &mut stderr,
+                "    Largest field segment: {:.2} MiB (limit: {:.2} MiB)",
+                max_observed_mb, segment_limit_mb
+            )?;
+            writeln!(
+                &mut stderr,
+                "💡 Recommendation: Try --block-records {} to reduce fragmentation.",
+                recommended
+            )?;
+        }
+    }
+
     Ok(())
 }
 
@@ -1447,6 +1641,7 @@ mod tests {
             false,
             None,
             false,
+            false, // verbose_metrics
         )
         .unwrap();
 
@@ -1484,6 +1679,7 @@ mod tests {
             false,
             None,
             false,
+            false, // verbose_metrics
         )
         .unwrap();
 
@@ -1649,6 +1845,7 @@ mod tests {
             false,  // show_progress
             None,   // max_segment_bytes
             false,  // allow_large_segments
+            false,  // verbose_metrics
         )
         .unwrap();
 
@@ -1687,6 +1884,7 @@ mod tests {
             false,
             None,
             false,
+            false, // verbose_metrics
         )
         .unwrap();
 

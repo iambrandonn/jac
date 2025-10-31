@@ -15,6 +15,7 @@ fn main() {
         "conformance" => run_conformance(),
         "fuzz" => run_fuzz(),
         "report" => run_report(),
+        "bench" => run_bench(),
         "all" => run_all(),
         "help" => print_help(),
         _ => {
@@ -38,6 +39,7 @@ fn print_help() {
     println!("  conformance  - Run conformance test suite with detailed reporting");
     println!("  fuzz         - Run fuzzing targets");
     println!("  report       - Generate compliance reports and dashboards");
+    println!("  bench        - Run performance benchmarks with criterion");
     println!("  all          - Run all validation steps");
     println!("  help         - Show this help message");
 }
@@ -172,6 +174,33 @@ fn run_report() {
     generate_spec_compliance_summary();
 
     println!("✅ Compliance reports generated");
+}
+
+fn run_bench() {
+    println!("⚡ Running performance benchmarks...");
+    println!("   (This may take several minutes)");
+    println!();
+
+    let status = Command::new("cargo")
+        .args(&["bench", "--workspace"])
+        .status()
+        .expect("Failed to run cargo bench");
+
+    if !status.success() {
+        eprintln!("❌ Benchmarks failed");
+        std::process::exit(1);
+    }
+
+    println!();
+    println!("✅ Benchmarks completed");
+    println!();
+    println!("Results available in:");
+    println!("  - target/criterion/             (detailed reports)");
+    println!("  - target/criterion/report/index.html (HTML dashboard)");
+    println!();
+    println!("To compare against baseline:");
+    println!("  cargo bench --workspace -- --save-baseline <name>");
+    println!("  cargo bench --workspace -- --baseline <name>");
 }
 
 fn run_all() {

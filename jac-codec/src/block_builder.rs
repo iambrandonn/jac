@@ -21,6 +21,12 @@ pub struct BlockBuilder {
     segment_limit_flushes: usize,
     /// Number of times a single record exceeded segment limit
     segment_limit_record_rejections: usize,
+    /// Per-field count of early flushes triggered by this field
+    per_field_flush_count: HashMap<String, u64>,
+    /// Per-field count of record rejections caused by this field
+    per_field_rejection_count: HashMap<String, u64>,
+    /// Per-field maximum observed segment size (uncompressed)
+    per_field_max_segment: HashMap<String, usize>,
 }
 
 /// Result of attempting to add a record to the current block.
@@ -46,6 +52,9 @@ impl BlockBuilder {
             estimated_memory: 0,
             segment_limit_flushes: 0,
             segment_limit_record_rejections: 0,
+            per_field_flush_count: HashMap::new(),
+            per_field_rejection_count: HashMap::new(),
+            per_field_max_segment: HashMap::new(),
         }
     }
 
@@ -75,6 +84,7 @@ impl BlockBuilder {
                 let single_upper = builder.estimated_single_value_upper_bound(value)?;
                 if single_upper > max_segment_len {
                     self.segment_limit_record_rejections += 1;
+                    *self.per_field_rejection_count.entry(field_name.clone()).or_insert(0) += 1;
                     return Err(JacError::LimitExceeded(format!(
                         "Field '{}' single-record payload ({} bytes) exceeds max_segment_uncompressed_len ({})",
                         field_name, single_upper, max_segment_len
@@ -87,6 +97,7 @@ impl BlockBuilder {
                 let single_upper = temp_builder.estimated_single_value_upper_bound(value)?;
                 if single_upper > max_segment_len {
                     self.segment_limit_record_rejections += 1;
+                    *self.per_field_rejection_count.entry(field_name.clone()).or_insert(0) += 1;
                     return Err(JacError::LimitExceeded(format!(
                         "Field '{}' single-record payload ({} bytes) exceeds max_segment_uncompressed_len ({})",
                         field_name, single_upper, max_segment_len
@@ -106,12 +117,14 @@ impl BlockBuilder {
             if projected > max_segment_len {
                 if current_record_count == 0 {
                     self.segment_limit_record_rejections += 1;
+                    *self.per_field_rejection_count.entry(field_name.clone()).or_insert(0) += 1;
                     return Err(JacError::LimitExceeded(format!(
                         "Field '{}' segment ({}) exceeds max_segment_uncompressed_len ({})",
                         field_name, projected, max_segment_len
                     )));
                 } else {
                     self.segment_limit_flushes += 1;
+                    *self.per_field_flush_count.entry(field_name.clone()).or_insert(0) += 1;
                     return Ok(TryAddRecordOutcome::BlockFull { record });
                 }
             }
@@ -133,12 +146,14 @@ impl BlockBuilder {
             if projected > max_segment_len {
                 if current_record_count == 0 {
                     self.segment_limit_record_rejections += 1;
+                    *self.per_field_rejection_count.entry(field_name.clone()).or_insert(0) += 1;
                     return Err(JacError::LimitExceeded(format!(
                         "Field '{}' segment ({}) exceeds max_segment_uncompressed_len ({})",
                         field_name, projected, max_segment_len
                     )));
                 } else {
                     self.segment_limit_flushes += 1;
+                    *self.per_field_flush_count.entry(field_name.clone()).or_insert(0) += 1;
                     return Ok(TryAddRecordOutcome::BlockFull { record });
                 }
             }
@@ -190,8 +205,8 @@ impl BlockBuilder {
         self.segment_limit_record_rejections
     }
 
-    /// Finalize block and create block data
-    pub fn finalize(self) -> Result<BlockData> {
+    /// Finalize block and create block data with metrics
+    pub fn finalize(mut self) -> Result<BlockFinish> {
         let record_count = self.records.len();
 
         // Sort field names for deterministic output
@@ -209,6 +224,13 @@ impl BlockBuilder {
             if let Some(column_builder) = self.column_builders.get(field_name) {
                 // Finalize column to get field segment
                 let field_segment = column_builder.clone().finalize(&self.opts, record_count)?;
+
+                // Track max segment size for this field
+                let segment_size = field_segment.uncompressed_payload.len();
+                let current_max = self.per_field_max_segment.get(field_name).copied().unwrap_or(0);
+                if segment_size > current_max {
+                    self.per_field_max_segment.insert(field_name.clone(), segment_size);
+                }
 
                 // Compress segment
                 let compressed = field_segment.compress(
@@ -253,10 +275,19 @@ impl BlockBuilder {
         }
         let crc32c = compute_crc32c(&crc_data);
 
-        Ok(BlockData {
+        let data = BlockData {
             header,
             segments,
             crc32c,
+        };
+
+        Ok(BlockFinish {
+            data,
+            segment_limit_flushes: self.segment_limit_flushes,
+            segment_limit_record_rejections: self.segment_limit_record_rejections,
+            per_field_flush_count: self.per_field_flush_count,
+            per_field_rejection_count: self.per_field_rejection_count,
+            per_field_max_segment: self.per_field_max_segment,
         })
     }
 
@@ -300,6 +331,23 @@ pub struct BlockData {
     pub crc32c: u32,
 }
 
+/// Metrics returned after finalizing a block.
+#[derive(Debug, Clone)]
+pub struct BlockFinish {
+    /// The encoded block data
+    pub data: BlockData,
+    /// Number of early flushes in this block (aggregated)
+    pub segment_limit_flushes: usize,
+    /// Number of record rejections in this block (aggregated)
+    pub segment_limit_record_rejections: usize,
+    /// Per-field flush counts
+    pub per_field_flush_count: HashMap<String, u64>,
+    /// Per-field rejection counts
+    pub per_field_rejection_count: HashMap<String, u64>,
+    /// Per-field maximum segment sizes observed (uncompressed)
+    pub per_field_max_segment: HashMap<String, usize>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -334,7 +382,7 @@ mod tests {
         record2.insert("name".to_string(), json!("bob"));
         add_record_expect_added(&mut builder, record2);
 
-        let block_data = builder.finalize().unwrap();
+        let block_data = builder.finalize().unwrap().data;
         assert_eq!(block_data.header.record_count, 2);
         assert_eq!(block_data.header.fields.len(), 2); // "id" and "name" fields
         assert_eq!(block_data.segments.len(), 2);
@@ -355,7 +403,7 @@ mod tests {
         record2.insert("value".to_string(), json!("hello")); // string
         add_record_expect_added(&mut builder, record2);
 
-        let block_data = builder.finalize().unwrap();
+        let block_data = builder.finalize().unwrap().data;
         assert_eq!(block_data.header.record_count, 2);
         assert_eq!(block_data.header.fields.len(), 1); // "value" field
         assert_eq!(block_data.segments.len(), 1);
@@ -377,7 +425,7 @@ mod tests {
         // Missing "name" field
         add_record_expect_added(&mut builder, record2);
 
-        let block_data = builder.finalize().unwrap();
+        let block_data = builder.finalize().unwrap().data;
         assert_eq!(block_data.header.record_count, 2);
         assert_eq!(block_data.header.fields.len(), 2); // "id" and "name" fields
         assert_eq!(block_data.segments.len(), 2);
@@ -396,7 +444,7 @@ mod tests {
         record.insert("banana".to_string(), json!("middle"));
         add_record_expect_added(&mut builder, record);
 
-        let block_data = builder.finalize().unwrap();
+        let block_data = builder.finalize().unwrap().data;
         assert_eq!(block_data.header.record_count, 1);
 
         // Check that fields are sorted
@@ -493,9 +541,9 @@ mod tests {
         let opts = CompressOpts::default();
         let builder = BlockBuilder::new(opts);
 
-        let block_data = builder.finalize().unwrap();
-        assert_eq!(block_data.header.record_count, 0);
-        assert_eq!(block_data.header.fields.len(), 0);
-        assert_eq!(block_data.segments.len(), 0);
+        let block_finish = builder.finalize().unwrap();
+        assert_eq!(block_finish.data.header.record_count, 0);
+        assert_eq!(block_finish.data.header.fields.len(), 0);
+        assert_eq!(block_finish.data.segments.len(), 0);
     }
 }

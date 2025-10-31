@@ -210,7 +210,7 @@ mod tests {
                 }
             }
         }
-        builder.finalize().unwrap()
+        builder.finalize().unwrap().data
     }
 
     fn assemble_bytes(data: &crate::block_builder::BlockData) -> Vec<u8> {
@@ -327,7 +327,8 @@ mod tests {
         let conformance_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("..")
             .join("testdata")
-            .join("conformance.ndjson");
+            .join("spec")
+            .join("v12_1.jsonl");
         let data =
             fs::read_to_string(conformance_path).expect("failed to read conformance fixture");
 

@@ -2,6 +2,7 @@
 
 use jac_codec::{BlockBuilder, BlockData, CompressOpts, TryAddRecordOutcome};
 use jac_format::{BlockIndexEntry, FileHeader, IndexFooter, JacError, Result};
+use std::collections::HashMap;
 use std::io::Write;
 
 /// JAC writer for streaming compression
@@ -81,20 +82,45 @@ impl<W: Write> JacWriter<W> {
         let previous_flushes = self.block_builder.segment_limit_flushes();
         let previous_rejections = self.block_builder.segment_limit_record_rejections();
 
-        let block_data = std::mem::replace(
+        let block_finish = std::mem::replace(
             &mut self.block_builder,
             BlockBuilder::new(self.opts.clone()),
         )
         .finalize()?;
-        let block_bytes = self.encode_block(&block_data)?;
+        let block_bytes = self.encode_block(&block_finish.data)?;
 
         self.metrics.segment_limit_flushes += previous_flushes as u64;
         self.metrics.segment_limit_record_rejections += previous_rejections as u64;
 
+        // Aggregate per-field metrics
+        for (field_name, flush_count) in &block_finish.per_field_flush_count {
+            self.metrics
+                .per_field_metrics
+                .entry(field_name.clone())
+                .or_insert_with(FieldMetrics::default)
+                .flush_count += flush_count;
+        }
+        for (field_name, rejection_count) in &block_finish.per_field_rejection_count {
+            self.metrics
+                .per_field_metrics
+                .entry(field_name.clone())
+                .or_insert_with(FieldMetrics::default)
+                .rejection_count += rejection_count;
+        }
+        for (field_name, max_segment) in &block_finish.per_field_max_segment {
+            let entry = self.metrics
+                .per_field_metrics
+                .entry(field_name.clone())
+                .or_insert_with(FieldMetrics::default);
+            if *max_segment > entry.max_segment_size_seen {
+                entry.max_segment_size_seen = *max_segment;
+            }
+        }
+
         // Track block index entry
         let block_offset = self.current_offset;
         let block_size = block_bytes.len();
-        let record_count = block_data.header.record_count;
+        let record_count = block_finish.data.header.record_count;
 
         self.block_index.push(BlockIndexEntry {
             block_offset,
@@ -191,7 +217,7 @@ impl<W: Write> JacWriter<W> {
 
         Ok(WriterFinish {
             writer,
-            metrics: self.metrics,
+            metrics: self.metrics.clone(),
         })
     }
 
@@ -213,7 +239,7 @@ impl<W: Write> JacWriter<W> {
 
     /// Snapshot current metrics without consuming the writer.
     pub fn metrics(&self) -> WriterMetrics {
-        self.metrics
+        self.metrics.clone()
     }
 }
 
@@ -235,8 +261,19 @@ pub struct WriterFinish<W> {
     pub metrics: WriterMetrics,
 }
 
+/// Per-field metrics for diagnostic purposes.
+#[derive(Debug, Clone, Default)]
+pub struct FieldMetrics {
+    /// Number of early block flushes triggered by this field.
+    pub flush_count: u64,
+    /// Number of record rejections due to this field exceeding limits.
+    pub rejection_count: u64,
+    /// Maximum segment size observed for this field (uncompressed bytes).
+    pub max_segment_size_seen: usize,
+}
+
 /// Metrics emitted by `JacWriter` to aid progress reporting.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct WriterMetrics {
     /// Total number of records written (including those in final partial blocks).
     pub records_written: u64,
@@ -248,4 +285,7 @@ pub struct WriterMetrics {
     pub segment_limit_flushes: u64,
     /// Number of records rejected because a single field exceeded segment limits.
     pub segment_limit_record_rejections: u64,
+    /// Per-field breakdown of flush/rejection events and max segment sizes.
+    /// Only populated when per-field tracking is enabled in the encoder.
+    pub per_field_metrics: HashMap<String, FieldMetrics>,
 }

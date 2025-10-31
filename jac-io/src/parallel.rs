@@ -1,6 +1,6 @@
 //! Parallel processing support
 
-use jac_codec::{BlockBuilder, BlockData, CompressOpts, DecompressOpts, TryAddRecordOutcome};
+use jac_codec::{BlockBuilder, BlockData, BlockFinish, CompressOpts, DecompressOpts, TryAddRecordOutcome};
 use jac_format::{FileHeader, JacError, Result};
 use rayon::prelude::*;
 use serde_json::Map;
@@ -11,7 +11,7 @@ use std::io::{Read, Write};
 pub fn compress_blocks_parallel(
     records: Vec<Map<String, Value>>,
     opts: &CompressOpts,
-) -> Result<Vec<BlockData>> {
+) -> Result<Vec<BlockFinish>> {
     let block_size = opts.block_target_records;
     let chunks: Vec<Vec<Map<String, Value>>> = records
         .chunks(block_size)

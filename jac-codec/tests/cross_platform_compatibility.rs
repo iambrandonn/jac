@@ -45,7 +45,7 @@ fn test_endianness_compatibility() {
         }
     }
 
-    let block_data = block_builder.finalize().unwrap();
+    let block_data = block_builder.finalize().unwrap().data;
 
     // Verify the block can be decoded
     let decompress_opts = DecompressOpts {
@@ -455,7 +455,7 @@ fn test_spec_conformance_cross_platform() {
         }
     }
 
-    let block_data = block_builder.finalize().unwrap();
+    let block_data = block_builder.finalize().unwrap().data;
 
     // Verify the block can be decoded
     let decompress_opts = DecompressOpts {

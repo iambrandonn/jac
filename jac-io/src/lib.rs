@@ -224,7 +224,7 @@ pub struct ProjectRequest {
 }
 
 /// Summary returned after a compression request.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct CompressSummary {
     /// Metrics produced by the writer.
     pub metrics: WriterMetrics,

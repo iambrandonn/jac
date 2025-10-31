@@ -443,7 +443,7 @@ mod tests {
             }
         }
 
-        (builder.finalize().unwrap(), limits)
+        (builder.finalize().unwrap().data, limits)
     }
 
     fn field_decoder(
