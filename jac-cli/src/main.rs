@@ -140,10 +140,10 @@ enum Commands {
         /// Show progress spinner while compressing
         #[arg(long)]
         progress: bool,
-        /// Cap the number of parallel worker threads (1 forces sequential mode)
+        /// Cap the number of parallel worker threads (1 forces sequential mode; defaults to auto-detect)
         #[arg(long)]
         threads: Option<usize>,
-        /// Fraction of available memory reserved for parallel compression (0 < factor ≤ 1)
+        /// Fraction of available memory reserved for parallel compression (0 < factor ≤ 1, override with JAC_PARALLEL_MEMORY_FACTOR)
         #[arg(long = "parallel-memory-factor", value_name = "FACTOR")]
         parallel_memory_factor: Option<f64>,
         /// Override segment size limit in bytes (requires --allow-large-segments when above default)
@@ -544,9 +544,6 @@ fn handle_pack(
     report_compress_summary(
         &summary,
         &output,
-        elapsed,
-        rec_rate,
-        mb_rate,
         verbose_metrics,
         block_records,
         segment_limit,
@@ -704,14 +701,15 @@ fn interpret_leading_bytes(buf: &[u8]) -> Option<ContainerFormat> {
 fn report_compress_summary(
     summary: &CompressSummary,
     output: &Path,
-    elapsed: Duration,
-    rec_rate: f64,
-    mb_rate: f64,
     verbose_metrics: bool,
     block_records: usize,
     segment_limit: usize,
 ) -> Result<(), Box<dyn Error>> {
     let mut stderr = std::io::stderr().lock();
+    let elapsed = summary.runtime_stats.wall_time;
+    let secs = elapsed.as_secs_f64().max(f64::EPSILON);
+    let rec_rate = summary.metrics.records_written as f64 / secs;
+    let mb_rate = summary.metrics.bytes_written as f64 / (1024.0 * 1024.0) / secs;
     writeln!(
         &mut stderr,
         "Compressed to {} (records: {}, blocks: {}, bytes written: {}, elapsed: {:.2?}, {:.1} rec/s, {:.2} MiB/s, segment flushes: {}, record rejects: {})",
@@ -725,6 +723,41 @@ fn report_compress_summary(
         summary.metrics.segment_limit_flushes,
         summary.metrics.segment_limit_record_rejections
     )?;
+
+    if let Some(peak) = summary.runtime_stats.peak_rss_bytes {
+        let peak_mib = bytes_to_mib(peak);
+        if let Some(decision) = summary.parallel_decision.as_ref() {
+            let estimated_mib = bytes_to_mib(decision.estimated_memory);
+            let delta_pct = if decision.estimated_memory > 0 {
+                ((peak as f64 - decision.estimated_memory as f64)
+                    / decision.estimated_memory as f64)
+                    * 100.0
+            } else {
+                0.0
+            };
+            writeln!(
+                &mut stderr,
+                "Observed peak RSS: {:.1} MiB (heuristic {:.1} MiB, Δ {:+.1}%)",
+                peak_mib, estimated_mib, delta_pct
+            )?;
+        } else {
+            writeln!(
+                &mut stderr,
+                "Observed peak RSS: {:.1} MiB (heuristic estimate unavailable)",
+                peak_mib
+            )?;
+        }
+    } else if summary
+        .parallel_decision
+        .as_ref()
+        .map(|decision| decision.use_parallel)
+        .unwrap_or(false)
+    {
+        writeln!(
+            &mut stderr,
+            "Observed peak RSS: not available (platform does not expose process RSS metrics)",
+        )?;
+    }
 
     // Display per-field metrics if verbose
     if verbose_metrics && !summary.metrics.per_field_metrics.is_empty() {
@@ -789,6 +822,10 @@ fn report_compress_summary(
     }
 
     Ok(())
+}
+
+fn bytes_to_mib(bytes: u64) -> f64 {
+    bytes as f64 / (1024.0 * 1024.0)
 }
 
 fn report_decompress_summary(

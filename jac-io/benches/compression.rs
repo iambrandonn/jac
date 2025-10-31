@@ -1,7 +1,11 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use jac_io::{execute_compress, Codec, CompressOptions, CompressRequest, InputSource, OutputSink};
+use jac_io::{
+    execute_compress, parallel::ParallelConfig, Codec, CompressOptions, CompressRequest,
+    InputSource, OutputSink,
+};
 use serde_json::json;
 use std::io::{Cursor, Write};
+use std::sync::Arc;
 
 /// Generate logs with low cardinality (good compression)
 fn generate_low_cardinality_logs(count: usize) -> Vec<u8> {
@@ -167,10 +171,66 @@ fn bench_zstd_levels(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_parallel_speedup(c: &mut Criterion) {
+    benchmark_parallel_config(c, "parallel_speedup_default_zstd", Codec::Zstd(6));
+    benchmark_parallel_config(
+        c,
+        "parallel_speedup_zstd_single_thread",
+        Codec::ZstdWithThreads {
+            level: 6,
+            threads: 1,
+        },
+    );
+}
+
+fn benchmark_parallel_config(c: &mut Criterion, group_name: &str, codec: Codec) {
+    let data = Arc::new(generate_low_cardinality_logs(80_000));
+    let mut group = c.benchmark_group(group_name);
+    let thread_counts = [1usize, 2, 4, 8];
+
+    for &threads in &thread_counts {
+        let dataset = Arc::clone(&data);
+
+        group.bench_with_input(
+            BenchmarkId::from_parameter(threads),
+            &threads,
+            move |b, &thread_count| {
+                let codec = codec;
+                b.iter(|| {
+                    let input = Cursor::new((*dataset).clone());
+                    let output = Cursor::new(Vec::new());
+
+                    let mut options = CompressOptions::default();
+                    options.block_target_records = 20_000;
+                    options.default_codec = codec;
+                    options.parallel_config = ParallelConfig {
+                        memory_reservation_factor: 1.0,
+                        max_threads: Some(thread_count),
+                    };
+                    options.limits.max_block_uncompressed_total = 32 * 1024 * 1024;
+
+                    let request = CompressRequest {
+                        input: InputSource::NdjsonReader(Box::new(input)),
+                        output: OutputSink::Writer(Box::new(output)),
+                        options,
+                        container_hint: Some(jac_format::ContainerFormat::Ndjson),
+                        emit_index: false,
+                    };
+
+                    black_box(execute_compress(request).unwrap());
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_compression_throughput,
     bench_block_size_impact,
-    bench_zstd_levels
+    bench_zstd_levels,
+    bench_parallel_speedup
 );
 criterion_main!(benches);

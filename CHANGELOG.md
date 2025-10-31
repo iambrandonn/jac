@@ -19,9 +19,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - File header stores container format hints (NDJSON vs JSON array) and `jac unpack` now defaults to the recorded wrapper when no format flag is provided.
 - `jac pack --max-segment-bytes` flag (with `--allow-large-segments`) to opt into larger segment ceilings, surfaced in writer metrics and CLI summaries, plus tests around limit overrides.
 - File headers now encode the effective segment limit in metadata so decoders mirror the producer's ceiling when the reader uses default limits.
+- Compression runtime telemetry (`CompressSummary::runtime_stats`) capturing wall-clock duration and peak RSS during sequential and parallel runs, surfaced through CLI verbose metrics.
+- Parallel determinism and decompression parity tests (`jac-io/tests/parallel_validation.rs`).
+- Criterion benchmarks covering parallel speedup across thread counts (default Zstd vs single-threaded) in `jac-io/benches/compression.rs`.
 
 ### Changed
 - Enhanced CLI documentation (README/PLAN/AGENTS) to reflect Phase 8 capabilities
+- README, SPEC addendum, and PLAN updated with Phase 5 validation guidance (runtime telemetry, container tuning, concurrency checklist completion).
+- CLI help text for `--threads`/`--parallel-memory-factor` now documents the `JAC_PARALLEL_MEMORY_FACTOR` environment override and heuristic defaults.
 
 ### Deprecated
 - N/A

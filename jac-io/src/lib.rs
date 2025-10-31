@@ -12,6 +12,7 @@
 
 pub mod parallel;
 pub mod reader;
+pub(crate) mod runtime;
 pub mod writer;
 
 // Re-export commonly used types
@@ -22,6 +23,8 @@ pub use reader::{
     BlockHandle, FieldIterator, JacReader, ProjectionStream, RecordStream as ReaderRecordStream,
 };
 pub use writer::{JacWriter, WriterFinish, WriterMetrics};
+
+use runtime::RuntimeMeasurement;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Deserializer, Map, Value};
@@ -233,6 +236,26 @@ pub struct CompressSummary {
     pub metrics: WriterMetrics,
     /// Parallel decision taken for this compression request.
     pub parallel_decision: Option<parallel::ParallelDecision>,
+    /// Wall-clock and memory statistics gathered during compression.
+    pub runtime_stats: CompressionRuntimeStats,
+}
+
+/// Runtime statistics captured during compression.
+#[derive(Debug, Clone, Copy)]
+pub struct CompressionRuntimeStats {
+    /// Total wall-clock time spent in the compression pipeline.
+    pub wall_time: std::time::Duration,
+    /// Observed peak resident set size in bytes (if available).
+    pub peak_rss_bytes: Option<u64>,
+}
+
+impl Default for CompressionRuntimeStats {
+    fn default() -> Self {
+        Self {
+            wall_time: std::time::Duration::default(),
+            peak_rss_bytes: None,
+        }
+    }
 }
 
 /// Summary returned after decompression.
@@ -303,6 +326,7 @@ pub fn execute_compress(request: CompressRequest) -> Result<CompressSummary> {
 }
 
 pub(crate) fn execute_compress_sequential(request: CompressRequest) -> Result<CompressSummary> {
+    let measurement = RuntimeMeasurement::begin();
     let CompressRequest {
         input,
         output,
@@ -345,9 +369,12 @@ pub(crate) fn execute_compress_sequential(request: CompressRequest) -> Result<Co
     buf_writer.flush()?;
     drop(buf_writer);
 
+    let runtime_stats = measurement.finish();
+
     Ok(CompressSummary {
         metrics: finish.metrics,
         parallel_decision: None,
+        runtime_stats,
     })
 }
 

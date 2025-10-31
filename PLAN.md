@@ -937,9 +937,9 @@ pub fn project<R: Read + Seek, W: Write>(input: R, output: W, fields: &[&str], a
 **File:** `src/parallel.rs`
 
 **Tasks:**
-- [ ] Parallel block compression: use `rayon` to encode blocks in parallel
-- [ ] Parallel decompression: decode multiple blocks concurrently
-- [ ] Ensure deterministic output (block order preserved)
+- [x] Parallel block compression: use `rayon` to encode blocks in parallel
+- [x] Parallel decompression: decode multiple blocks concurrently
+- [x] Ensure deterministic output (block order preserved)
 
 **Tests:**
 - Compress 10 blocks in parallel → same output as sequential (JAC-layer determinism: presence/tags/dicts/ordering)

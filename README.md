@@ -193,6 +193,24 @@ JAC_PARALLEL_MEMORY_FACTOR=0.5 jac pack data.ndjson -o data.jac
 
 When `--verbose-metrics` is enabled—or when you explicitly override threads or memory factor—the CLI prints the heuristic decision, including the effective reservation factor and estimated peak memory. This helps confirm that your tuning behaves as expected.
 
+JAC now records and reports **actual** compression wall-clock time and peak RSS usage (measured at 50 ms intervals) so you can validate the heuristic against reality. The `--verbose-metrics` summary includes both the heuristic estimate and the observed peak, making it easy to spot under-provisioned hosts or cases where the reservation factor should be adjusted.
+
+### Containers and cgroups
+
+Inside containers the host-reported “available” memory often ignores cgroup limits. Set an explicit memory ceiling and/or thread cap so the heuristic matches your runtime budget:
+
+```bash
+limit_bytes=$(cat /sys/fs/cgroup/memory.max)
+if [[ "$limit_bytes" == "max" ]]; then
+  limit_bytes=$((8 * 1024 * 1024 * 1024)) # fallback for unconstrained hosts
+fi
+# Reserve 70% of the cgroup limit for compression buffers
+factor=$(python -c "limit=$limit_bytes or 1; print(f'{0.70 if limit>0 else 0.70:.3f}')")
+JAC_PARALLEL_MEMORY_FACTOR=$factor jac pack input.ndjson -o output.jac --threads 6 --verbose-metrics
+```
+
+If you already know the desired cap, skip the calculation and set `--parallel-memory-factor` (or the env var) directly. Combine the flag with `--threads` to keep concurrency within the container’s CPU quota.
+
 ## Testing
 
 JAC includes a comprehensive Phase 9 validation suite with multiple testing categories and automated CI integration.

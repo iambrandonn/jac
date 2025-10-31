@@ -4,7 +4,7 @@
 //! sequential and parallel compression paths. Later phases will add the
 //! actual parallel pipeline that consumes this decision.
 
-use crate::InputSource;
+use crate::{runtime::RuntimeMeasurement, InputSource};
 use jac_format::{Limits, Result};
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -268,6 +268,7 @@ pub(crate) fn execute_compress_parallel(
     request: CompressRequest,
     thread_count: usize,
 ) -> Result<CompressSummary> {
+    let measurement = RuntimeMeasurement::begin();
     let CompressRequest {
         input,
         output,
@@ -479,10 +480,12 @@ pub(crate) fn execute_compress_parallel(
 
     let mut metrics = finish.metrics;
     metrics.records_written = records_written;
+    let runtime_stats = measurement.finish();
 
     Ok(CompressSummary {
         metrics,
         parallel_decision: None,
+        runtime_stats,
     })
 }
 

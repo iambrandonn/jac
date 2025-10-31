@@ -662,3 +662,11 @@ Given 4 records:
 * Ensure **segment order** is exactly as in §1.1; update readers to rely on directory offsets only (no implicit alignment).
 * Add **strict mode** vs **resync mode** for streaming error recovery.
 * Update worked example tests to use presence, not dictionary “absent”.
+
+## **7) Phase 5 Performance Validation & Telemetry**
+**Informative (implementation guidance)**
+
+* Parallel compression **MUST** preserve byte-for-byte determinism across thread counts (validated via automated integration tests comparing sequential vs parallel output and round-tripping through the decoder).
+* `CompressSummary` now exposes `runtime_stats`, capturing wall-clock duration and peak RSS usage. Implementations **SHOULD** sample RSS at ≤50 ms intervals while compression is active and report the observed peak alongside heuristic estimates in operator-facing tooling.
+* Benchmarks in `jac-io/benches/compression.rs` include a `parallel_speedup_*` group covering thread counts {1,2,4,8} for both default Zstd and single-threaded Zstd variants. These benches **SHOULD** be run as part of Phase 5 validation to confirm the expected 6–7× speedup on 8-core hosts and to quantify the benefit of constraining Zstd’s internal threading.
+* Operators **SHOULD** track the measured peak RSS against the heuristic estimate (`memory_reservation_factor × available_memory`). If the observed peak regularly exceeds the estimate, lower the factor (e.g., 0.75 → 0.65) and document the adjustment in deployment playbooks.
