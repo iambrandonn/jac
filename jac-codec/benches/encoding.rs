@@ -1,11 +1,9 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
-use jac_codec::{BlockBuilder, CompressOpts, TryAddRecordOutcome};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use jac_codec::{compress_block_segments, BlockBuilder, CompressOpts, TryAddRecordOutcome};
 use serde_json::{json, Map, Value};
 
 fn create_test_records(count: usize, cardinality: usize) -> Vec<Map<String, Value>> {
-    let users: Vec<String> = (0..cardinality)
-        .map(|i| format!("user{}", i))
-        .collect();
+    let users: Vec<String> = (0..cardinality).map(|i| format!("user{}", i)).collect();
 
     (0..count)
         .map(|i| {
@@ -94,5 +92,64 @@ fn bench_dictionary_effectiveness(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_block_building, bench_dictionary_effectiveness);
+fn bench_finalize_vs_prepare(c: &mut Criterion) {
+    let records = create_test_records(5_000, 250);
+
+    let mut group = c.benchmark_group("block_finalize_vs_prepare");
+
+    group.bench_function("finalize_sequential", |b| {
+        b.iter(|| {
+            let mut opts = CompressOpts::default();
+            opts.block_target_records = 6_000;
+            let mut builder = BlockBuilder::new(opts);
+
+            for record in &records {
+                match builder
+                    .try_add_record(black_box(record.clone()))
+                    .expect("add record")
+                {
+                    TryAddRecordOutcome::Added => {}
+                    TryAddRecordOutcome::BlockFull { .. } => {
+                        panic!("unexpected block fullness during benchmark");
+                    }
+                }
+            }
+
+            black_box(builder.finalize().expect("finalize block"));
+        });
+    });
+
+    group.bench_function("prepare_then_compress", |b| {
+        b.iter(|| {
+            let mut opts = CompressOpts::default();
+            opts.block_target_records = 6_000;
+            let codec = opts.default_codec;
+            let mut builder = BlockBuilder::new(opts);
+
+            for record in &records {
+                match builder
+                    .try_add_record(black_box(record.clone()))
+                    .expect("add record")
+                {
+                    TryAddRecordOutcome::Added => {}
+                    TryAddRecordOutcome::BlockFull { .. } => {
+                        panic!("unexpected block fullness during benchmark");
+                    }
+                }
+            }
+
+            let uncompressed = builder.prepare_segments().expect("prepare segments");
+            black_box(compress_block_segments(uncompressed, codec).expect("compress segments"));
+        });
+    });
+
+    group.finish();
+}
+
+criterion_group!(
+    benches,
+    bench_block_building,
+    bench_dictionary_effectiveness,
+    bench_finalize_vs_prepare
+);
 criterion_main!(benches);

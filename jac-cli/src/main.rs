@@ -427,7 +427,10 @@ fn handle_pack(
                 let observed_mib = ctx.observed_size as f64 / (1024.0 * 1024.0);
                 let limit_mib = ctx.limit as f64 / (1024.0 * 1024.0);
 
-                eprintln!("\nERROR: Field '{}' single-record payload exceeds segment limit", ctx.field_name);
+                eprintln!(
+                    "\nERROR: Field '{}' single-record payload exceeds segment limit",
+                    ctx.field_name
+                );
                 eprintln!("  Observed: {:.2} MiB", observed_mib);
                 eprintln!("  Limit:    {:.2} MiB", limit_mib);
                 eprintln!();
@@ -435,17 +438,21 @@ fn handle_pack(
                 eprintln!();
                 eprintln!("Recommended solutions:");
                 eprintln!("  1. Increase the segment limit (advanced, use with caution):");
-                eprintln!("     jac pack --max-segment-bytes {} --allow-large-segments {} -o {}",
+                eprintln!(
+                    "     jac pack --max-segment-bytes {} --allow-large-segments {} -o {}",
                     (ctx.observed_size * 2).max(128 * 1024 * 1024),
                     input.display(),
-                    output.display());
+                    output.display()
+                );
                 eprintln!();
                 eprintln!("  2. Modify your data to reduce field sizes:");
                 eprintln!("     - Split large nested objects into multiple records");
                 eprintln!("     - Store large blobs externally and reference by ID");
                 eprintln!("     - Compress data before encoding");
                 eprintln!();
-                eprintln!("WARNING: Raising limits above 64 MiB increases memory usage and DoS risk.");
+                eprintln!(
+                    "WARNING: Raising limits above 64 MiB increases memory usage and DoS risk."
+                );
             }
 
             return Err(format!("Segment limit exceeded: {}", msg).into());

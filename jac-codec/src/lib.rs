@@ -22,11 +22,16 @@ pub use jac_format::{
 };
 
 // Re-export our own types
-pub use block_builder::{BlockBuilder, BlockData, BlockFinish, TryAddRecordOutcome};
+pub use block_builder::{
+    compress_block_segments, BlockBuilder, BlockData, BlockFinish, TryAddRecordOutcome,
+    UncompressedBlockData,
+};
 pub use block_decode::{BlockDecoder, DecompressOpts};
 pub use column::{ColumnBuilder, FieldSegment};
 pub use segment::FieldSegment as Segment;
 pub use segment_decode::FieldSegmentDecoder;
+
+use std::convert::TryFrom;
 
 // Compression options
 
@@ -70,6 +75,13 @@ pub enum Codec {
     None,
     /// Zstandard compression with level
     Zstd(u8),
+    /// Zstandard compression with explicit thread count
+    ZstdWithThreads {
+        /// Compression level (compatible with FileHeader metadata)
+        level: i32,
+        /// Requested encoder threads (>= 1)
+        threads: usize,
+    },
     /// Brotli compression (not implemented in v0.1.0)
     Brotli(u8),
     /// Deflate compression (not implemented in v0.1.0)
@@ -82,6 +94,7 @@ impl Codec {
         match self {
             Codec::None => 0,
             Codec::Zstd(_) => 1,
+            Codec::ZstdWithThreads { .. } => 1,
             Codec::Brotli(_) => 2,
             Codec::Deflate(_) => 3,
         }
@@ -92,8 +105,46 @@ impl Codec {
         match self {
             Codec::None => 0,
             Codec::Zstd(level) => *level,
+            Codec::ZstdWithThreads { level, .. } => {
+                u8::try_from(*level).unwrap_or(if *level < 0 { 0 } else { u8::MAX })
+            }
             Codec::Brotli(level) => *level,
             Codec::Deflate(level) => *level,
         }
+    }
+
+    /// Return the zstd compression level as `i32` when applicable.
+    pub fn zstd_level_i32(&self) -> Option<i32> {
+        match self {
+            Codec::Zstd(level) => Some(i32::from(*level)),
+            Codec::ZstdWithThreads { level, .. } => Some(*level),
+            _ => None,
+        }
+    }
+
+    /// Return the configured encoder thread count when applicable.
+    pub fn zstd_threads(&self) -> Option<usize> {
+        match self {
+            Codec::ZstdWithThreads { threads, .. } => Some(*threads),
+            _ => None,
+        }
+    }
+}
+
+/// Configure codec for sequential or parallel usage.
+///
+/// When `single_threaded` is true, zstd codecs are wrapped to force the encoder
+/// to use a single internal thread. This prevents oversubscription when the
+/// caller executes multiple compression tasks in parallel (e.g., via Rayon).
+pub fn configure_codec_for_parallel(codec: Codec, single_threaded: bool) -> Codec {
+    match codec {
+        Codec::Zstd(level) if single_threaded => Codec::ZstdWithThreads {
+            level: i32::from(level),
+            threads: 1,
+        },
+        Codec::ZstdWithThreads { level, .. } if single_threaded => {
+            Codec::ZstdWithThreads { level, threads: 1 }
+        }
+        _ => codec,
     }
 }

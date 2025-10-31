@@ -1,6 +1,9 @@
 //! Block builder for aggregating columns
 
-use crate::{column::ColumnContribution, ColumnBuilder, CompressOpts};
+use crate::{
+    column::{ColumnContribution, FieldSegment},
+    Codec, ColumnBuilder, CompressOpts,
+};
 use jac_format::{checksum::compute_crc32c, BlockHeader, FieldDirectoryEntry, JacError, Result};
 use serde_json;
 use std::collections::HashMap;
@@ -27,6 +30,29 @@ pub struct BlockBuilder {
     per_field_rejection_count: HashMap<String, u64>,
     /// Per-field maximum observed segment size (uncompressed)
     per_field_max_segment: HashMap<String, usize>,
+}
+
+/// Uncompressed block data produced by [`BlockBuilder::prepare_segments`].
+///
+/// This structure captures all columnar output for a block without performing
+/// compression, enabling callers to hand the payload off to worker threads for
+/// parallel compression.
+#[derive(Debug)]
+pub struct UncompressedBlockData {
+    /// Field segments in deterministic (possibly canonicalized) order.
+    pub field_segments: Vec<(String, FieldSegment)>,
+    /// Record count for this block.
+    pub record_count: usize,
+    /// Aggregated count of early segment flushes triggered while building the block.
+    pub segment_limit_flushes: usize,
+    /// Aggregated count of per-record rejections while building the block.
+    pub segment_limit_record_rejections: usize,
+    /// Field-specific flush counts.
+    pub per_field_flush_count: HashMap<String, u64>,
+    /// Field-specific rejection counts.
+    pub per_field_rejection_count: HashMap<String, u64>,
+    /// Maximum uncompressed segment size observed per field.
+    pub per_field_max_segment: HashMap<String, usize>,
 }
 
 /// Result of attempting to add a record to the current block.
@@ -84,7 +110,10 @@ impl BlockBuilder {
                 let single_upper = builder.estimated_single_value_upper_bound(value)?;
                 if single_upper > max_segment_len {
                     self.segment_limit_record_rejections += 1;
-                    *self.per_field_rejection_count.entry(field_name.clone()).or_insert(0) += 1;
+                    *self
+                        .per_field_rejection_count
+                        .entry(field_name.clone())
+                        .or_insert(0) += 1;
                     return Err(JacError::LimitExceeded(format!(
                         "Field '{}' single-record payload ({} bytes) exceeds max_segment_uncompressed_len ({})",
                         field_name, single_upper, max_segment_len
@@ -97,7 +126,10 @@ impl BlockBuilder {
                 let single_upper = temp_builder.estimated_single_value_upper_bound(value)?;
                 if single_upper > max_segment_len {
                     self.segment_limit_record_rejections += 1;
-                    *self.per_field_rejection_count.entry(field_name.clone()).or_insert(0) += 1;
+                    *self
+                        .per_field_rejection_count
+                        .entry(field_name.clone())
+                        .or_insert(0) += 1;
                     return Err(JacError::LimitExceeded(format!(
                         "Field '{}' single-record payload ({} bytes) exceeds max_segment_uncompressed_len ({})",
                         field_name, single_upper, max_segment_len
@@ -117,14 +149,20 @@ impl BlockBuilder {
             if projected > max_segment_len {
                 if current_record_count == 0 {
                     self.segment_limit_record_rejections += 1;
-                    *self.per_field_rejection_count.entry(field_name.clone()).or_insert(0) += 1;
+                    *self
+                        .per_field_rejection_count
+                        .entry(field_name.clone())
+                        .or_insert(0) += 1;
                     return Err(JacError::LimitExceeded(format!(
                         "Field '{}' segment ({}) exceeds max_segment_uncompressed_len ({})",
                         field_name, projected, max_segment_len
                     )));
                 } else {
                     self.segment_limit_flushes += 1;
-                    *self.per_field_flush_count.entry(field_name.clone()).or_insert(0) += 1;
+                    *self
+                        .per_field_flush_count
+                        .entry(field_name.clone())
+                        .or_insert(0) += 1;
                     return Ok(TryAddRecordOutcome::BlockFull { record });
                 }
             }
@@ -146,14 +184,20 @@ impl BlockBuilder {
             if projected > max_segment_len {
                 if current_record_count == 0 {
                     self.segment_limit_record_rejections += 1;
-                    *self.per_field_rejection_count.entry(field_name.clone()).or_insert(0) += 1;
+                    *self
+                        .per_field_rejection_count
+                        .entry(field_name.clone())
+                        .or_insert(0) += 1;
                     return Err(JacError::LimitExceeded(format!(
                         "Field '{}' segment ({}) exceeds max_segment_uncompressed_len ({})",
                         field_name, projected, max_segment_len
                     )));
                 } else {
                     self.segment_limit_flushes += 1;
-                    *self.per_field_flush_count.entry(field_name.clone()).or_insert(0) += 1;
+                    *self
+                        .per_field_flush_count
+                        .entry(field_name.clone())
+                        .or_insert(0) += 1;
                     return Ok(TryAddRecordOutcome::BlockFull { record });
                 }
             }
@@ -195,6 +239,11 @@ impl BlockBuilder {
         self.records.len()
     }
 
+    /// Returns true when no records have been buffered into the block.
+    pub fn is_empty(&self) -> bool {
+        self.records.is_empty()
+    }
+
     /// Number of times segment limit triggered a flush suggestion.
     pub fn segment_limit_flushes(&self) -> usize {
         self.segment_limit_flushes
@@ -205,90 +254,61 @@ impl BlockBuilder {
         self.segment_limit_record_rejections
     }
 
-    /// Finalize block and create block data with metrics
-    pub fn finalize(mut self) -> Result<BlockFinish> {
+    /// Prepare field segments without performing compression.
+    ///
+    /// This method consumes the builder, finalizes each column, and packages
+    /// the resulting `FieldSegment`s along with all accumulated metrics.
+    /// Callers are expected to pass the returned value to
+    /// [`compress_block_segments`] (potentially on a worker thread).
+    pub fn prepare_segments(mut self) -> Result<UncompressedBlockData> {
         let record_count = self.records.len();
 
-        // Sort field names for deterministic output
         let mut sorted_field_names = self.field_names.clone();
         if self.opts.canonicalize_keys {
             sorted_field_names.sort();
         }
 
-        // Build field segments
-        let mut field_entries = Vec::new();
-        let mut segments = Vec::new();
-        let mut current_offset = 0;
+        let mut field_segments = Vec::with_capacity(sorted_field_names.len());
 
         for field_name in &sorted_field_names {
             if let Some(column_builder) = self.column_builders.get(field_name) {
-                // Finalize column to get field segment
                 let field_segment = column_builder.clone().finalize(&self.opts, record_count)?;
 
-                // Track max segment size for this field
                 let segment_size = field_segment.uncompressed_payload.len();
-                let current_max = self.per_field_max_segment.get(field_name).copied().unwrap_or(0);
+                let current_max = self
+                    .per_field_max_segment
+                    .get(field_name)
+                    .copied()
+                    .unwrap_or(0);
                 if segment_size > current_max {
-                    self.per_field_max_segment.insert(field_name.clone(), segment_size);
+                    self.per_field_max_segment
+                        .insert(field_name.clone(), segment_size);
                 }
 
-                // Compress segment
-                let compressed = field_segment.compress(
-                    self.opts.default_codec.compressor_id(),
-                    self.opts.default_codec.level(),
-                )?;
-
-                // Create directory entry
-                let entry = FieldDirectoryEntry {
-                    field_name: field_name.clone(),
-                    compressor: self.opts.default_codec.compressor_id(),
-                    compression_level: self.opts.default_codec.level(),
-                    presence_bytes: (record_count + 7) >> 3,
-                    tag_bytes: ((3 * field_segment.value_count_present) + 7) >> 3,
-                    value_count_present: field_segment.value_count_present,
-                    encoding_flags: field_segment.encoding_flags,
-                    dict_entry_count: field_segment.dict_entry_count,
-                    segment_uncompressed_len: field_segment.uncompressed_payload.len(),
-                    segment_compressed_len: compressed.len(),
-                    segment_offset: current_offset,
-                };
-
-                field_entries.push(entry);
-                current_offset += compressed.len();
-                segments.push(compressed);
+                field_segments.push((field_name.clone(), field_segment));
             }
         }
 
-        // Create block header
-        let header = BlockHeader {
+        Ok(UncompressedBlockData {
+            field_segments,
             record_count,
-            fields: field_entries,
-        };
-
-        // Encode header
-        let header_bytes = header.encode()?;
-
-        // Calculate CRC32C over header + all segments
-        let mut crc_data = header_bytes.clone();
-        for segment in &segments {
-            crc_data.extend_from_slice(segment);
-        }
-        let crc32c = compute_crc32c(&crc_data);
-
-        let data = BlockData {
-            header,
-            segments,
-            crc32c,
-        };
-
-        Ok(BlockFinish {
-            data,
             segment_limit_flushes: self.segment_limit_flushes,
             segment_limit_record_rejections: self.segment_limit_record_rejections,
             per_field_flush_count: self.per_field_flush_count,
             per_field_rejection_count: self.per_field_rejection_count,
             per_field_max_segment: self.per_field_max_segment,
         })
+    }
+
+    /// Finalize block and create block data with metrics.
+    ///
+    /// This remains the sequential helper used by existing callers. Internally
+    /// it routes through [`prepare_segments`] followed by
+    /// [`compress_block_segments`].
+    pub fn finalize(self) -> Result<BlockFinish> {
+        let codec = self.opts.default_codec;
+        let uncompressed = self.prepare_segments()?;
+        compress_block_segments(uncompressed, codec)
     }
 
     /// Estimate memory usage for a record
@@ -318,6 +338,74 @@ impl BlockBuilder {
             }
         }
     }
+}
+
+/// Compress prepared block segments using the provided codec.
+///
+/// Consumers that prepare blocks on a producer thread can invoke this helper
+/// inside a worker context to obtain the final `BlockFinish` payload without
+/// re-implementing directory construction or CRC accounting.
+pub fn compress_block_segments(
+    uncompressed: UncompressedBlockData,
+    codec: Codec,
+) -> Result<BlockFinish> {
+    let record_count = uncompressed.record_count;
+    let mut field_entries = Vec::with_capacity(uncompressed.field_segments.len());
+    let mut segments = Vec::with_capacity(uncompressed.field_segments.len());
+    let mut current_offset = 0usize;
+
+    let compressor_id = codec.compressor_id();
+    let compression_level = codec.level();
+
+    for (field_name, field_segment) in uncompressed.field_segments {
+        let compressed = field_segment.compress(codec)?;
+
+        let entry = FieldDirectoryEntry {
+            field_name,
+            compressor: compressor_id,
+            compression_level,
+            presence_bytes: (record_count + 7) >> 3,
+            tag_bytes: ((3 * field_segment.value_count_present) + 7) >> 3,
+            value_count_present: field_segment.value_count_present,
+            encoding_flags: field_segment.encoding_flags,
+            dict_entry_count: field_segment.dict_entry_count,
+            segment_uncompressed_len: field_segment.uncompressed_payload.len(),
+            segment_compressed_len: compressed.len(),
+            segment_offset: current_offset,
+        };
+
+        current_offset += compressed.len();
+        field_entries.push(entry);
+        segments.push(compressed);
+    }
+
+    let header = BlockHeader {
+        record_count,
+        fields: field_entries,
+    };
+
+    let header_bytes = header.encode()?;
+
+    let mut crc_data = header_bytes.clone();
+    for segment in &segments {
+        crc_data.extend_from_slice(segment);
+    }
+    let crc32c = compute_crc32c(&crc_data);
+
+    let data = BlockData {
+        header,
+        segments,
+        crc32c,
+    };
+
+    Ok(BlockFinish {
+        data,
+        segment_limit_flushes: uncompressed.segment_limit_flushes,
+        segment_limit_record_rejections: uncompressed.segment_limit_record_rejections,
+        per_field_flush_count: uncompressed.per_field_flush_count,
+        per_field_rejection_count: uncompressed.per_field_rejection_count,
+        per_field_max_segment: uncompressed.per_field_max_segment,
+    })
 }
 
 /// Block data containing header, segments, and CRC
@@ -483,6 +571,66 @@ mod tests {
 
         let err = builder.finalize().unwrap_err();
         assert!(matches!(err, JacError::UnsupportedCompression(3)));
+    }
+
+    #[test]
+    fn test_prepare_segments_equivalence() {
+        let mut opts_seq = CompressOpts::default();
+        opts_seq.default_codec = Codec::None;
+        let mut builder_seq = BlockBuilder::new(opts_seq);
+
+        let mut opts_split = CompressOpts::default();
+        opts_split.default_codec = Codec::None;
+        let mut builder_split = BlockBuilder::new(opts_split);
+
+        let mut record1 = serde_json::Map::new();
+        record1.insert("id".to_string(), json!(1));
+        record1.insert("name".to_string(), json!("alice"));
+
+        let mut record2 = serde_json::Map::new();
+        record2.insert("id".to_string(), json!(2));
+        record2.insert("name".to_string(), json!("bob"));
+
+        let records = vec![record1, record2];
+
+        for record in records.iter().cloned() {
+            add_record_expect_added(&mut builder_seq, record);
+        }
+        for record in records.into_iter() {
+            add_record_expect_added(&mut builder_split, record);
+        }
+
+        let expected = builder_seq.finalize().expect("sequential finalize");
+        let uncompressed = builder_split.prepare_segments().expect("prepare segments");
+        let rebuilt =
+            compress_block_segments(uncompressed, Codec::None).expect("compress segments");
+
+        assert_eq!(
+            rebuilt.data.header.record_count,
+            expected.data.header.record_count
+        );
+        assert_eq!(rebuilt.data.segments, expected.data.segments);
+        assert_eq!(rebuilt.data.crc32c, expected.data.crc32c);
+        assert_eq!(
+            rebuilt.segment_limit_flushes,
+            expected.segment_limit_flushes
+        );
+        assert_eq!(
+            rebuilt.segment_limit_record_rejections,
+            expected.segment_limit_record_rejections
+        );
+        assert_eq!(
+            rebuilt.per_field_flush_count,
+            expected.per_field_flush_count
+        );
+        assert_eq!(
+            rebuilt.per_field_rejection_count,
+            expected.per_field_rejection_count
+        );
+        assert_eq!(
+            rebuilt.per_field_max_segment,
+            expected.per_field_max_segment
+        );
     }
 
     #[test]

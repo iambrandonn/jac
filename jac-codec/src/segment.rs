@@ -1,6 +1,9 @@
 //! Field segment encoding
 
+use crate::Codec;
 use jac_format::{JacError, Result};
+use std::convert::TryFrom;
+use std::io::Write;
 
 /// Field segment containing encoded data
 #[derive(Debug, Clone)]
@@ -17,27 +20,52 @@ pub struct FieldSegment {
 
 impl FieldSegment {
     /// Compress segment using specified codec and level
-    pub fn compress(&self, codec: u8, level: u8) -> Result<Vec<u8>> {
+    pub fn compress(&self, codec: Codec) -> Result<Vec<u8>> {
         match codec {
-            0 => {
-                // No compression
-                Ok(self.uncompressed_payload.clone())
+            Codec::None => Ok(self.uncompressed_payload.clone()),
+            Codec::Zstd(level) => {
+                zstd::encode_all(self.uncompressed_payload.as_slice(), i32::from(level)).map_err(
+                    |e| JacError::DecompressError(format!("Zstd compression failed: {}", e)),
+                )
             }
-            1 => {
-                // Zstandard compression
-                zstd::encode_all(self.uncompressed_payload.as_slice(), level as i32).map_err(|e| {
+            Codec::ZstdWithThreads { level, threads } => {
+                if threads == 0 {
+                    return Err(JacError::Internal(
+                        "Zstd thread count must be at least 1".to_string(),
+                    ));
+                }
+
+                let threads_u32 = u32::try_from(threads).map_err(|_| {
+                    JacError::Internal(format!(
+                        "Zstd thread count {} exceeds supported range",
+                        threads
+                    ))
+                })?;
+
+                let mut encoder = zstd::Encoder::new(Vec::new(), level).map_err(|e| {
+                    JacError::DecompressError(format!("Zstd encoder init failed: {}", e))
+                })?;
+                encoder.multithread(threads_u32).map_err(|e| {
+                    JacError::DecompressError(format!(
+                        "Zstd multithread configuration failed: {}",
+                        e
+                    ))
+                })?;
+                encoder
+                    .write_all(&self.uncompressed_payload)
+                    .map_err(|e| JacError::DecompressError(format!("Zstd write failed: {}", e)))?;
+                encoder.finish().map_err(|e| {
                     JacError::DecompressError(format!("Zstd compression failed: {}", e))
                 })
             }
-            2 => {
+            Codec::Brotli(_) => {
                 // Brotli (not implemented in v0.1.0)
                 Err(JacError::UnsupportedCompression(2))
             }
-            3 => {
+            Codec::Deflate(_) => {
                 // Deflate (not implemented in v0.1.0)
                 Err(JacError::UnsupportedCompression(3))
             }
-            _ => Err(JacError::UnsupportedCompression(codec)),
         }
     }
 }
@@ -58,14 +86,14 @@ mod tests {
     #[test]
     fn test_compress_brotli_returns_unsupported() {
         let segment = sample_segment();
-        let err = segment.compress(2, 4).unwrap_err();
+        let err = segment.compress(Codec::Brotli(11)).unwrap_err();
         assert!(matches!(err, JacError::UnsupportedCompression(2)));
     }
 
     #[test]
     fn test_compress_deflate_returns_unsupported() {
         let segment = sample_segment();
-        let err = segment.compress(3, 4).unwrap_err();
+        let err = segment.compress(Codec::Deflate(6)).unwrap_err();
         assert!(matches!(err, JacError::UnsupportedCompression(3)));
     }
 }

@@ -1,6 +1,6 @@
 //! Streaming writer for JAC files
 
-use jac_codec::{BlockBuilder, BlockData, CompressOpts, TryAddRecordOutcome};
+use jac_codec::{BlockBuilder, BlockData, BlockFinish, CompressOpts, TryAddRecordOutcome};
 use jac_format::{BlockIndexEntry, FileHeader, IndexFooter, JacError, Result};
 use std::collections::HashMap;
 use std::io::Write;
@@ -72,27 +72,22 @@ impl<W: Write> JacWriter<W> {
         Ok(())
     }
 
-    /// Flush current block to output
-    fn flush_block(&mut self) -> Result<()> {
-        if self.block_builder.record_count() == 0 {
+    /// Write a pre-compressed block produced by the codec layer.
+    ///
+    /// Parallel compression paths can call this after preparing and
+    /// compressing a block off-thread, ensuring metrics and index bookkeeping
+    /// remain consistent with the sequential writer.
+    pub fn write_compressed_block(&mut self, block_finish: BlockFinish) -> Result<()> {
+        if block_finish.data.header.record_count == 0 {
             return Ok(());
         }
 
-        // Finalize the block (this consumes the block builder)
-        let previous_flushes = self.block_builder.segment_limit_flushes();
-        let previous_rejections = self.block_builder.segment_limit_record_rejections();
-
-        let block_finish = std::mem::replace(
-            &mut self.block_builder,
-            BlockBuilder::new(self.opts.clone()),
-        )
-        .finalize()?;
         let block_bytes = self.encode_block(&block_finish.data)?;
 
-        self.metrics.segment_limit_flushes += previous_flushes as u64;
-        self.metrics.segment_limit_record_rejections += previous_rejections as u64;
+        self.metrics.segment_limit_flushes += block_finish.segment_limit_flushes as u64;
+        self.metrics.segment_limit_record_rejections +=
+            block_finish.segment_limit_record_rejections as u64;
 
-        // Aggregate per-field metrics
         for (field_name, flush_count) in &block_finish.per_field_flush_count {
             self.metrics
                 .per_field_metrics
@@ -108,7 +103,8 @@ impl<W: Write> JacWriter<W> {
                 .rejection_count += rejection_count;
         }
         for (field_name, max_segment) in &block_finish.per_field_max_segment {
-            let entry = self.metrics
+            let entry = self
+                .metrics
                 .per_field_metrics
                 .entry(field_name.clone())
                 .or_insert_with(FieldMetrics::default);
@@ -117,7 +113,6 @@ impl<W: Write> JacWriter<W> {
             }
         }
 
-        // Track block index entry
         let block_offset = self.current_offset;
         let block_size = block_bytes.len();
         let record_count = block_finish.data.header.record_count;
@@ -129,7 +124,6 @@ impl<W: Write> JacWriter<W> {
         });
         self.metrics.blocks_written += 1;
 
-        // Write block to output
         if let Some(writer) = self.writer.as_mut() {
             writer.write_all(&block_bytes)?;
         } else {
@@ -138,11 +132,25 @@ impl<W: Write> JacWriter<W> {
             ));
         }
 
-        // Update current offset
         self.current_offset += block_size as u64;
         self.metrics.bytes_written += block_size as u64;
 
         Ok(())
+    }
+
+    /// Flush current block to output
+    fn flush_block(&mut self) -> Result<()> {
+        if self.block_builder.record_count() == 0 {
+            return Ok(());
+        }
+
+        // Finalize the block (this consumes the block builder)
+        let block_finish = std::mem::replace(
+            &mut self.block_builder,
+            BlockBuilder::new(self.opts.clone()),
+        )
+        .finalize()?;
+        self.write_compressed_block(block_finish)
     }
 
     /// Force flushing of the current (possibly partial) block.

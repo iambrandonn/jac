@@ -1,4 +1,4 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId, Throughput};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use jac_io::{
     execute_compress, execute_decompress, execute_project, CompressOptions, CompressRequest,
     DecompressFormat, DecompressOptions, DecompressRequest, InputSource, JacInput, OutputSink,
@@ -98,26 +98,22 @@ fn bench_field_projection(c: &mut Criterion) {
     ];
 
     for (name, fields) in projection_scenarios {
-        group.bench_with_input(
-            BenchmarkId::from_parameter(name),
-            &fields,
-            |b, fields| {
-                b.iter(|| {
-                    let input = Cursor::new(compressed.clone());
-                    let output = Cursor::new(Vec::new());
+        group.bench_with_input(BenchmarkId::from_parameter(name), &fields, |b, fields| {
+            b.iter(|| {
+                let input = Cursor::new(compressed.clone());
+                let output = Cursor::new(Vec::new());
 
-                    let request = ProjectRequest {
-                        input: JacInput::Reader(Box::new(input)),
-                        output: OutputSink::Writer(Box::new(output)),
-                        fields: fields.iter().map(|s| s.to_string()).collect(),
-                        format: ProjectFormat::Ndjson,
-                        options: DecompressOptions::default(),
-                    };
+                let request = ProjectRequest {
+                    input: JacInput::Reader(Box::new(input)),
+                    output: OutputSink::Writer(Box::new(output)),
+                    fields: fields.iter().map(|s| s.to_string()).collect(),
+                    format: ProjectFormat::Ndjson,
+                    options: DecompressOptions::default(),
+                };
 
-                    black_box(execute_project(request).unwrap());
-                });
-            },
-        );
+                black_box(execute_project(request).unwrap());
+            });
+        });
     }
 
     group.finish();

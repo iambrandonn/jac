@@ -1,6 +1,6 @@
 //! Column builder for converting records to columnar format
 
-use crate::CompressOpts;
+use crate::{Codec, CompressOpts};
 use jac_format::{
     bitpack::{PresenceBitmap, TagPacker},
     varint::{encode_uleb128, zigzag_encode},
@@ -9,6 +9,8 @@ use jac_format::{
 use serde_json;
 use std::cmp::{max, min};
 use std::collections::HashMap;
+use std::convert::TryFrom;
+use std::io::Write;
 
 type DictionaryBuild = (Option<(Vec<String>, HashMap<String, usize>)>, bool);
 
@@ -606,27 +608,46 @@ pub struct FieldSegment {
 
 impl FieldSegment {
     /// Compress segment using specified codec and level
-    pub fn compress(&self, codec: u8, level: u8) -> Result<Vec<u8>> {
+    pub fn compress(&self, codec: Codec) -> Result<Vec<u8>> {
         match codec {
-            0 => {
-                // No compression
-                Ok(self.uncompressed_payload.clone())
+            Codec::None => Ok(self.uncompressed_payload.clone()),
+            Codec::Zstd(level) => {
+                zstd::encode_all(self.uncompressed_payload.as_slice(), i32::from(level)).map_err(
+                    |e| JacError::DecompressError(format!("Zstd compression failed: {}", e)),
+                )
             }
-            1 => {
-                // Zstandard compression
-                zstd::encode_all(self.uncompressed_payload.as_slice(), level as i32).map_err(|e| {
+            Codec::ZstdWithThreads { level, threads } => {
+                if threads == 0 {
+                    return Err(JacError::Internal(
+                        "Zstd thread count must be at least 1".to_string(),
+                    ));
+                }
+
+                let threads_u32 = u32::try_from(threads).map_err(|_| {
+                    JacError::Internal(format!(
+                        "Zstd thread count {} exceeds supported range",
+                        threads
+                    ))
+                })?;
+
+                let mut encoder = zstd::Encoder::new(Vec::new(), level).map_err(|e| {
+                    JacError::DecompressError(format!("Zstd encoder init failed: {}", e))
+                })?;
+                encoder.multithread(threads_u32).map_err(|e| {
+                    JacError::DecompressError(format!(
+                        "Zstd multithread configuration failed: {}",
+                        e
+                    ))
+                })?;
+                encoder
+                    .write_all(&self.uncompressed_payload)
+                    .map_err(|e| JacError::DecompressError(format!("Zstd write failed: {}", e)))?;
+                encoder.finish().map_err(|e| {
                     JacError::DecompressError(format!("Zstd compression failed: {}", e))
                 })
             }
-            2 => {
-                // Brotli (not implemented in v0.1.0)
-                Err(JacError::UnsupportedCompression(2))
-            }
-            3 => {
-                // Deflate (not implemented in v0.1.0)
-                Err(JacError::UnsupportedCompression(3))
-            }
-            _ => Err(JacError::UnsupportedCompression(codec)),
+            Codec::Brotli(_) => Err(JacError::UnsupportedCompression(2)),
+            Codec::Deflate(_) => Err(JacError::UnsupportedCompression(3)),
         }
     }
 }

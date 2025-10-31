@@ -156,6 +156,13 @@ fn test_compression_codec_compatibility() {
         (Codec::Zstd(1), true),
         (Codec::Zstd(15), true),
         (Codec::Zstd(22), true),
+        (
+            Codec::ZstdWithThreads {
+                level: 3,
+                threads: 1,
+            },
+            true,
+        ),
         (Codec::Brotli(11), false), // Not implemented in v0.1.0
         (Codec::Deflate(6), false), // Not implemented in v0.1.0
     ];

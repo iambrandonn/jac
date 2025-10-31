@@ -1,5 +1,5 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId, Throughput};
-use jac_io::{execute_compress, CompressOptions, CompressRequest, Codec, InputSource, OutputSink};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use jac_io::{execute_compress, Codec, CompressOptions, CompressRequest, InputSource, OutputSink};
 use serde_json::json;
 use std::io::{Cursor, Write};
 
