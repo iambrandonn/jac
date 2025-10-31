@@ -279,6 +279,14 @@ pub(crate) fn build_file_header(
 
 /// Execute a compression request.
 pub fn execute_compress(request: CompressRequest) -> Result<CompressSummary> {
+    let decision = crate::parallel::should_use_parallel(&request.input, &request.options.limits)?;
+    if decision.use_parallel {
+        return crate::parallel::execute_compress_parallel(request, decision.thread_count);
+    }
+    execute_compress_sequential(request)
+}
+
+pub(crate) fn execute_compress_sequential(request: CompressRequest) -> Result<CompressSummary> {
     let CompressRequest {
         input,
         output,
@@ -286,9 +294,6 @@ pub fn execute_compress(request: CompressRequest) -> Result<CompressSummary> {
         container_hint,
         emit_index,
     } = request;
-
-    let parallel_decision = crate::parallel::should_use_parallel(&input, &options.limits)?;
-    let _ = &parallel_decision;
 
     let stream = input.into_record_stream()?;
     let detected_hint = stream.container_format();
@@ -1150,6 +1155,192 @@ mod tests {
         assert_eq!(summary.metrics.segment_limit_record_rejections, 0);
         assert_eq!(summary.metrics.segment_limit_flushes, 1);
         assert_eq!(summary.metrics.blocks_written, 2);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn parallel_pipeline_matches_sequential_output() {
+        let dir = tempdir().unwrap();
+        let seq_path = dir.path().join("sequential.jac");
+        let par_path = dir.path().join("parallel.jac");
+
+        let mut base_options = CompressOptions::default();
+        base_options.block_target_records = 4;
+        base_options.default_codec = Codec::None;
+        base_options.canonicalize_keys = true;
+        base_options.canonicalize_numbers = true;
+        base_options.nested_opaque = true;
+
+        let make_records = || {
+            let mut out = Vec::new();
+            for i in 0..12 {
+                let mut record = Map::new();
+                record.insert("id".to_string(), Value::from(i as i64));
+                record.insert(
+                    "user".to_string(),
+                    Value::String(format!("user_{:02}", i % 5)),
+                );
+                record.insert("active".to_string(), Value::Bool(i % 2 == 0));
+                record.insert(
+                    "message".to_string(),
+                    Value::String(format!("event {} occurred", i)),
+                );
+                record.insert("score".to_string(), Value::Number(((i * i) as i64).into()));
+                out.push(record);
+            }
+            out
+        };
+
+        let records = make_records();
+        let record_count = records.len();
+        let seq_records = records.clone();
+
+        let sequential_request = CompressRequest {
+            input: InputSource::Iterator(Box::new(seq_records.into_iter())),
+            output: OutputSink::Path(seq_path.clone()),
+            options: base_options.clone(),
+            container_hint: Some(ContainerFormat::Ndjson),
+            emit_index: true,
+        };
+        let seq_summary = execute_compress_sequential(sequential_request).unwrap();
+
+        let parallel_request = CompressRequest {
+            input: InputSource::Iterator(Box::new(records.into_iter())),
+            output: OutputSink::Path(par_path.clone()),
+            options: base_options,
+            container_hint: Some(ContainerFormat::Ndjson),
+            emit_index: true,
+        };
+        let par_summary = crate::parallel::execute_compress_parallel(parallel_request, 2).unwrap();
+
+        let seq_bytes = fs::read(&seq_path).unwrap();
+        let par_bytes = fs::read(&par_path).unwrap();
+
+        assert_eq!(
+            seq_bytes, par_bytes,
+            "parallel output must match sequential bytes"
+        );
+        assert_eq!(
+            seq_summary.metrics.records_written,
+            par_summary.metrics.records_written
+        );
+        assert_eq!(par_summary.metrics.records_written, record_count as u64);
+        assert_eq!(
+            seq_summary.metrics.blocks_written,
+            par_summary.metrics.blocks_written
+        );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn parallel_pipeline_decompression_matches_original() {
+        fn read_records(bytes: &[u8]) -> Vec<Map<String, Value>> {
+            let mut reader =
+                JacReader::new(Cursor::new(bytes.to_vec()), DecompressOpts::default()).unwrap();
+            reader
+                .record_stream()
+                .unwrap()
+                .map(|res| res.unwrap())
+                .collect()
+        }
+
+        let dir = tempdir().unwrap();
+        let seq_path = dir.path().join("seq_decompress.jac");
+        let par_path = dir.path().join("par_decompress.jac");
+
+        let mut options = CompressOptions::default();
+        options.block_target_records = 5;
+        options.default_codec = Codec::None;
+        options.canonicalize_keys = true;
+        options.canonicalize_numbers = true;
+
+        let records: Vec<Map<String, Value>> = (0..9)
+            .map(|i| {
+                let mut record = Map::new();
+                record.insert("id".to_string(), Value::from(i as i64));
+                record.insert("user".to_string(), Value::String(format!("user-{}", i % 3)));
+                record.insert("active".to_string(), Value::Bool(i % 2 == 0));
+                record.insert(
+                    "payload".to_string(),
+                    Value::String(format!("payload-{:04}", i * 7)),
+                );
+                record
+            })
+            .collect();
+        let original = records.clone();
+
+        let sequential_request = CompressRequest {
+            input: InputSource::Iterator(Box::new(records.clone().into_iter())),
+            output: OutputSink::Path(seq_path.clone()),
+            options: options.clone(),
+            container_hint: Some(ContainerFormat::Ndjson),
+            emit_index: true,
+        };
+        execute_compress_sequential(sequential_request).unwrap();
+
+        let parallel_request = CompressRequest {
+            input: InputSource::Iterator(Box::new(records.into_iter())),
+            output: OutputSink::Path(par_path.clone()),
+            options,
+            container_hint: Some(ContainerFormat::Ndjson),
+            emit_index: true,
+        };
+        crate::parallel::execute_compress_parallel(parallel_request, 2).unwrap();
+
+        let seq_bytes = fs::read(&seq_path).unwrap();
+        let par_bytes = fs::read(&par_path).unwrap();
+
+        let seq_records = read_records(&seq_bytes);
+        let par_records = read_records(&par_bytes);
+
+        assert_eq!(seq_records, original);
+        assert_eq!(par_records, original);
+        assert_eq!(seq_records, par_records);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn parallel_pipeline_propagates_limit_errors() {
+        let mut options = CompressOptions::default();
+        options.block_target_records = 4;
+        options.default_codec = Codec::None;
+        options.limits.max_segment_uncompressed_len = 8;
+
+        let mut record = Map::new();
+        record.insert(
+            "field".to_string(),
+            Value::String("abcdefghijk".to_string()),
+        );
+        let records = vec![record.clone()];
+
+        let sequential_request = CompressRequest {
+            input: InputSource::Iterator(Box::new(records.clone().into_iter())),
+            output: OutputSink::Writer(Box::new(Vec::new())),
+            options: options.clone(),
+            container_hint: Some(ContainerFormat::Ndjson),
+            emit_index: false,
+        };
+
+        let seq_error = execute_compress_sequential(sequential_request).unwrap_err();
+        match seq_error {
+            JacError::LimitExceeded(_) => {}
+            other => panic!("expected limit exceeded error, got {:?}", other),
+        }
+
+        let parallel_request = CompressRequest {
+            input: InputSource::Iterator(Box::new(vec![record].into_iter())),
+            output: OutputSink::Writer(Box::new(Vec::new())),
+            options,
+            container_hint: Some(ContainerFormat::Ndjson),
+            emit_index: false,
+        };
+
+        let par_error =
+            crate::parallel::execute_compress_parallel(parallel_request, 2).unwrap_err();
+        match par_error {
+            JacError::LimitExceeded(_) => {}
+            other => panic!("expected parallel limit exceeded error, got {:?}", other),
+        }
     }
 
     #[test]

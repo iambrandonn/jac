@@ -10,6 +10,26 @@ use jac_format::{Limits, Result};
 #[cfg(not(target_arch = "wasm32"))]
 use sysinfo::System;
 
+#[cfg(not(target_arch = "wasm32"))]
+use crate::{build_file_header, writer::JacWriter, CompressOpts, CompressRequest, CompressSummary};
+#[cfg(not(target_arch = "wasm32"))]
+use jac_codec::{
+    compress_block_segments, configure_codec_for_parallel, BlockBuilder, BlockFinish,
+    TryAddRecordOutcome,
+};
+#[cfg(not(target_arch = "wasm32"))]
+use jac_format::JacError;
+#[cfg(not(target_arch = "wasm32"))]
+use rayon::ThreadPoolBuilder;
+#[cfg(not(target_arch = "wasm32"))]
+use std::{
+    collections::BTreeMap,
+    io::{BufWriter, Write},
+    mem,
+    sync::{mpsc::sync_channel, Arc, Mutex},
+    thread,
+};
+
 const SMALL_FILE_THRESHOLD_BYTES: u64 = 10 * 1024 * 1024;
 const MEMORY_RESERVATION_NUMERATOR: u64 = 3;
 const MEMORY_RESERVATION_DENOMINATOR: u64 = 4;
@@ -168,6 +188,236 @@ fn evaluate_parallel_decision(
 
 fn bytes_to_mib(bytes: u64) -> f64 {
     bytes as f64 / (1024.0 * 1024.0)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn execute_compress_parallel(
+    request: CompressRequest,
+    thread_count: usize,
+) -> Result<CompressSummary> {
+    let CompressRequest {
+        input,
+        output,
+        options,
+        container_hint,
+        emit_index,
+    } = request;
+
+    let record_stream = input.into_record_stream()?;
+    let detected_hint = record_stream.container_format();
+    let final_hint = container_hint.unwrap_or(detected_hint);
+
+    let writer_target = output.into_writer()?;
+    let buf_writer = BufWriter::new(writer_target);
+    let header = build_file_header(&options, Some(final_hint))?;
+
+    let codec_opts = CompressOpts {
+        block_target_records: options.block_target_records,
+        default_codec: options.default_codec,
+        canonicalize_keys: options.canonicalize_keys,
+        canonicalize_numbers: options.canonicalize_numbers,
+        nested_opaque: options.nested_opaque,
+        max_dict_entries: options.max_dict_entries,
+        limits: options.limits.clone(),
+    };
+
+    let builder_opts = codec_opts.clone();
+    let mut writer = JacWriter::new(buf_writer, header, codec_opts)?;
+
+    let worker_codec = configure_codec_for_parallel(options.default_codec, true);
+
+    let (uncompressed_tx, uncompressed_rx) = sync_channel(thread_count);
+    let (compressed_tx, compressed_rx) = sync_channel(thread_count);
+
+    let compression_error: Arc<Mutex<Option<JacError>>> = Arc::new(Mutex::new(None));
+
+    let builder_handle = {
+        let builder_opts = builder_opts.clone();
+        thread::Builder::new()
+            .name("jac-builder".to_string())
+            .spawn(move || -> Result<()> {
+                let mut block_idx = 0usize;
+                let mut builder = BlockBuilder::new(builder_opts.clone());
+                let mut stream = record_stream;
+
+                while let Some(record_result) = stream.next() {
+                    let record = record_result?;
+                    match builder.try_add_record(record)? {
+                        TryAddRecordOutcome::Added => {}
+                        TryAddRecordOutcome::BlockFull { record } => {
+                            let full_builder =
+                                mem::replace(&mut builder, BlockBuilder::new(builder_opts.clone()));
+                            let uncompressed = full_builder.prepare_segments()?;
+
+                            if uncompressed_tx.send((block_idx, uncompressed)).is_err() {
+                                return Err(JacError::Internal(
+                                    "Compression workers terminated early".into(),
+                                ));
+                            }
+                            block_idx += 1;
+
+                            match builder.try_add_record(record)? {
+                                TryAddRecordOutcome::Added => {}
+                                TryAddRecordOutcome::BlockFull { .. } => {
+                                    return Err(JacError::Internal(
+                                        "New block reported full immediately".into(),
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if !builder.is_empty() {
+                    let uncompressed = builder.prepare_segments()?;
+                    if uncompressed_tx.send((block_idx, uncompressed)).is_err() {
+                        return Err(JacError::Internal(
+                            "Compression workers terminated before receiving final block".into(),
+                        ));
+                    }
+                }
+
+                drop(uncompressed_tx);
+                Ok(())
+            })?
+    };
+
+    let pool = ThreadPoolBuilder::new()
+        .num_threads(thread_count)
+        .thread_name(|idx| format!("jac-compress-{}", idx))
+        .build()
+        .map_err(|e| JacError::Internal(format!("Failed to create thread pool: {}", e)))?;
+
+    let compression_error_for_workers = Arc::clone(&compression_error);
+    let compress_handle = thread::Builder::new()
+        .name("jac-compress-coordinator".to_string())
+        .spawn(move || -> Result<()> {
+            pool.scope(|scope| {
+                for (block_idx, uncompressed) in uncompressed_rx {
+                    if compression_error_for_workers.lock().unwrap().is_some() {
+                        break;
+                    }
+
+                    let tx = compressed_tx.clone();
+                    let error_slot = Arc::clone(&compression_error_for_workers);
+
+                    scope.spawn(move |_| {
+                        match compress_block_segments(uncompressed, worker_codec) {
+                            Ok(block_finish) => {
+                                if tx.send((block_idx, block_finish)).is_err() {
+                                    let mut guard = error_slot.lock().unwrap();
+                                    if guard.is_none() {
+                                        *guard = Some(JacError::Internal(
+                                            "Writer thread terminated early".into(),
+                                        ));
+                                    }
+                                }
+                            }
+                            Err(err) => {
+                                let mut guard = error_slot.lock().unwrap();
+                                if guard.is_none() {
+                                    *guard = Some(err);
+                                }
+                            }
+                        }
+                    });
+                }
+            });
+            drop(compressed_tx);
+            Ok(())
+        })?;
+
+    let mut pending_blocks: BTreeMap<usize, BlockFinish> = BTreeMap::new();
+    let mut next_block_idx = 0usize;
+    let mut records_written = 0u64;
+    let mut encountered_error = false;
+
+    for (block_idx, block_finish) in compressed_rx {
+        if encountered_error {
+            break;
+        }
+
+        if block_idx == next_block_idx {
+            let record_count = block_finish.data.header.record_count as u64;
+            if let Err(err) = writer.write_compressed_block(block_finish) {
+                let mut slot = compression_error.lock().unwrap();
+                if slot.is_none() {
+                    *slot = Some(err);
+                }
+                encountered_error = true;
+                break;
+            }
+            records_written += record_count;
+            next_block_idx += 1;
+
+            while let Some(pending) = pending_blocks.remove(&next_block_idx) {
+                let record_count = pending.data.header.record_count as u64;
+                if let Err(err) = writer.write_compressed_block(pending) {
+                    let mut slot = compression_error.lock().unwrap();
+                    if slot.is_none() {
+                        *slot = Some(err);
+                    }
+                    encountered_error = true;
+                    break;
+                }
+                records_written += record_count;
+                next_block_idx += 1;
+            }
+            if encountered_error {
+                break;
+            }
+        } else {
+            pending_blocks.insert(block_idx, block_finish);
+        }
+    }
+
+    let builder_result = builder_handle
+        .join()
+        .map_err(|e| JacError::Internal(format!("Builder thread panicked: {:?}", e)))?;
+    if let Err(err) = builder_result {
+        return Err(err);
+    }
+
+    let compress_result = compress_handle
+        .join()
+        .map_err(|e| JacError::Internal(format!("Compression thread panicked: {:?}", e)))?;
+    if let Err(err) = compress_result {
+        return Err(err);
+    }
+
+    if let Some(err) = compression_error.lock().unwrap().take() {
+        return Err(err);
+    }
+
+    if !encountered_error && !pending_blocks.is_empty() {
+        return Err(JacError::Internal(
+            "Parallel compression pipeline terminated early".into(),
+        ));
+    }
+
+    let finish = if emit_index {
+        writer.finish_with_index()?
+    } else {
+        writer.finish_without_index()?
+    };
+
+    let mut buf_writer = finish.writer;
+    buf_writer.flush()?;
+
+    let mut metrics = finish.metrics;
+    metrics.records_written = records_written;
+
+    Ok(CompressSummary { metrics })
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn execute_compress_parallel(
+    request: CompressRequest,
+    _thread_count: usize,
+) -> Result<CompressSummary> {
+    // This path should never be selected on WASM targets, but we fall back to sequential
+    // execution for completeness.
+    super::execute_compress_sequential(request)
 }
 
 #[cfg(test)]
