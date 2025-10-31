@@ -24,6 +24,9 @@ bytes.workspace = true
 thiserror.workspace = true
 tokio = { version = "1.37", optional = true, features = ["rt", "rt-multi-thread", "macros"] }
 
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+sysinfo = "0.30"
+
 [dev-dependencies]
 proptest.workspace = true
 jac-test-utils = { path = "../jac-test-utils" }

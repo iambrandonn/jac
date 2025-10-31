@@ -246,22 +246,11 @@ pub struct ProjectSummary {
     pub rows_written: u64,
 }
 
-/// Execute a compression request.
-pub fn execute_compress(request: CompressRequest) -> Result<CompressSummary> {
-    let CompressRequest {
-        input,
-        output,
-        options,
-        container_hint,
-        emit_index,
-    } = request;
-
-    let stream = input.into_record_stream()?;
-    let detected_hint = stream.container_format();
-    let final_hint = container_hint.unwrap_or(detected_hint);
-    let writer_target = output.into_writer()?;
-    let buf_writer = BufWriter::new(writer_target);
-
+/// Build a `FileHeader` configured according to the provided compression options.
+pub(crate) fn build_file_header(
+    options: &CompressOptions,
+    container_hint: Option<ContainerFormat>,
+) -> Result<FileHeader> {
     let mut flags = 0u32;
     if options.canonicalize_keys {
         flags |= jac_format::constants::FLAG_CANONICALIZE_KEYS;
@@ -280,7 +269,33 @@ pub fn execute_compress(request: CompressRequest) -> Result<CompressSummary> {
         block_size_hint_records: options.block_target_records,
         user_metadata: encode_header_metadata(&options.limits)?,
     };
-    header.set_container_format_hint(final_hint);
+
+    if let Some(hint) = container_hint {
+        header.set_container_format_hint(hint);
+    }
+
+    Ok(header)
+}
+
+/// Execute a compression request.
+pub fn execute_compress(request: CompressRequest) -> Result<CompressSummary> {
+    let CompressRequest {
+        input,
+        output,
+        options,
+        container_hint,
+        emit_index,
+    } = request;
+
+    let parallel_decision = crate::parallel::should_use_parallel(&input, &options.limits)?;
+    let _ = &parallel_decision;
+
+    let stream = input.into_record_stream()?;
+    let detected_hint = stream.container_format();
+    let final_hint = container_hint.unwrap_or(detected_hint);
+    let writer_target = output.into_writer()?;
+    let buf_writer = BufWriter::new(writer_target);
+    let header = build_file_header(&options, Some(final_hint))?;
 
     let codec_opts = CompressOpts {
         block_target_records: options.block_target_records,
@@ -545,7 +560,7 @@ where
 }
 
 impl InputSource {
-    fn into_record_stream(self) -> Result<RecordStream> {
+    pub(crate) fn into_record_stream(self) -> Result<RecordStream> {
         match self {
             InputSource::NdjsonPath(path) => {
                 let file = File::open(path)?;
@@ -565,7 +580,7 @@ impl InputSource {
 }
 
 impl OutputSink {
-    fn into_writer(self) -> Result<Box<dyn WriteSend>> {
+    pub(crate) fn into_writer(self) -> Result<Box<dyn WriteSend>> {
         match self {
             OutputSink::Path(path) => Ok(Box::new(File::create(path)?)),
             OutputSink::Writer(writer) => Ok(writer),
