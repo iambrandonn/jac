@@ -118,6 +118,81 @@ JAC enforces strict limits to prevent decompression bombs:
 
 The encoder refuses to emit segments that exceed these ceilings. Advanced users may raise the segment ceiling during compression via `jac pack --max-segment-bytes <bytes> --allow-large-segments`; this warning-gated flag is intended for trusted data where larger segments are required. The effective limit is written into the file header metadata so that `jac` and library consumers enforce the same ceiling during decompression, while respecting any stricter limit explicitly supplied by the reader.
 
+## Troubleshooting Segment Limits
+
+### Auto-Flush Behavior
+
+JAC automatically flushes blocks early when a field segment approaches the 64 MiB limit. This prevents encoding failures but may increase block count. You can monitor this behavior using the `--verbose-metrics` flag:
+
+```bash
+jac pack input.ndjson -o output.jac --verbose-metrics
+```
+
+This will display per-field metrics showing which fields triggered early flushes.
+
+### Error: "Field 'X' single-record payload exceeds segment limit"
+
+**Cause:** A single record contains a field that would exceed 64 MiB uncompressed.
+
+**Solutions:**
+
+1. **Increase segment limit (advanced, use with caution):**
+   ```bash
+   jac pack --max-segment-bytes 134217728 --allow-large-segments input.ndjson -o output.jac
+   ```
+   ⚠️ **Warning:** Raising limits above 64 MiB increases memory usage and DoS risk. Only use this for trusted data.
+
+2. **Modify your data to reduce field sizes:**
+   - Split large nested objects into multiple records
+   - Store large blobs externally and reference by ID
+   - Compress or truncate data before encoding
+
+### Understanding Per-Field Metrics
+
+When using `--verbose-metrics`, JAC displays:
+- **flush_count**: Number of early block flushes caused by this field
+- **rejection_count**: Number of records rejected due to this field exceeding limits
+- **max_segment_size**: Largest uncompressed segment size seen for this field
+
+High flush counts suggest you should reduce `--block-records` to avoid frequent early flushes:
+
+```bash
+# Default is 100,000 records per block
+jac pack input.ndjson -o output.jac --block-records 50000
+```
+
+## Parallel Compression Controls
+
+JAC automatically decides when to compress in parallel based on CPU count, available memory, and input size:
+
+- Uses up to 16 worker threads by default, but only when multiple cores and sufficient RAM are available
+- Reserves roughly 75% of reported free memory for in-flight blocks (each worker can hold one block’s uncompressed payload)
+- Falls back to sequential mode for small files (<10 MiB) where parallel overhead would dominate
+
+You can tune or override this behaviour:
+
+| Control | Purpose | Notes |
+|---------|---------|-------|
+| `--threads N` | Cap worker threads (set `1` to force sequential mode) | Applies after memory-based cap |
+| `--parallel-memory-factor F` | Adjust memory reservation factor (0 < F ≤ 1) | e.g. `0.6` reserves 60% of free RAM |
+| `JAC_PARALLEL_MEMORY_FACTOR=F` | Environment override for reservation factor | CLI flag takes precedence |
+| `--verbose-metrics` | Show the selected parallel decision and reasoning | Helpful for tuning |
+
+Examples:
+
+```bash
+# Force sequential compression
+jac pack data.ndjson -o data.jac --threads 1
+
+# Cap to 4 threads and lower memory reservation to 60%
+jac pack data.ndjson -o data.jac --threads 4 --parallel-memory-factor 0.6 --verbose-metrics
+
+# Apply a lower factor from the environment (flag still wins)
+JAC_PARALLEL_MEMORY_FACTOR=0.5 jac pack data.ndjson -o data.jac
+```
+
+When `--verbose-metrics` is enabled—or when you explicitly override threads or memory factor—the CLI prints the heuristic decision, including the effective reservation factor and estimated peak memory. This helps confirm that your tuning behaves as expected.
+
 ## Testing
 
 JAC includes a comprehensive Phase 9 validation suite with multiple testing categories and automated CI integration.

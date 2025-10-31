@@ -82,6 +82,8 @@ pub struct CompressOptions {
     pub max_dict_entries: usize,
     /// Security limits
     pub limits: Limits,
+    /// Parallel execution tuning parameters.
+    pub parallel_config: parallel::ParallelConfig,
 }
 
 impl Default for CompressOptions {
@@ -94,6 +96,7 @@ impl Default for CompressOptions {
             nested_opaque: true,
             max_dict_entries: 4_096,
             limits: Limits::default(),
+            parallel_config: parallel::ParallelConfig::default(),
         }
     }
 }
@@ -228,6 +231,8 @@ pub struct ProjectRequest {
 pub struct CompressSummary {
     /// Metrics produced by the writer.
     pub metrics: WriterMetrics,
+    /// Parallel decision taken for this compression request.
+    pub parallel_decision: Option<parallel::ParallelDecision>,
 }
 
 /// Summary returned after decompression.
@@ -279,11 +284,22 @@ pub(crate) fn build_file_header(
 
 /// Execute a compression request.
 pub fn execute_compress(request: CompressRequest) -> Result<CompressSummary> {
-    let decision = crate::parallel::should_use_parallel(&request.input, &request.options.limits)?;
+    let decision = crate::parallel::should_use_parallel(
+        &request.input,
+        &request.options.limits,
+        &request.options.parallel_config,
+    )?;
+
     if decision.use_parallel {
-        return crate::parallel::execute_compress_parallel(request, decision.thread_count);
+        let mut summary =
+            crate::parallel::execute_compress_parallel(request, decision.thread_count)?;
+        summary.parallel_decision = Some(decision);
+        return Ok(summary);
     }
-    execute_compress_sequential(request)
+
+    let mut summary = execute_compress_sequential(request)?;
+    summary.parallel_decision = Some(decision);
+    Ok(summary)
 }
 
 pub(crate) fn execute_compress_sequential(request: CompressRequest) -> Result<CompressSummary> {
@@ -331,6 +347,7 @@ pub(crate) fn execute_compress_sequential(request: CompressRequest) -> Result<Co
 
     Ok(CompressSummary {
         metrics: finish.metrics,
+        parallel_decision: None,
     })
 }
 

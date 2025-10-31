@@ -9,9 +9,10 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use indicatif::{ProgressBar, ProgressStyle};
 use jac_io::{
-    execute_compress, execute_decompress, BlockHandle, Codec, CompressOptions, CompressRequest,
-    CompressSummary, ContainerFormat, DecompressFormat, DecompressOptions, DecompressOpts,
-    DecompressRequest, DecompressSummary, InputSource, JacInput, JacReader, Limits, OutputSink,
+    execute_compress, execute_decompress, parallel::ParallelConfig, BlockHandle, Codec,
+    CompressOptions, CompressRequest, CompressSummary, ContainerFormat, DecompressFormat,
+    DecompressOptions, DecompressOpts, DecompressRequest, DecompressSummary, InputSource, JacInput,
+    JacReader, Limits, OutputSink,
 };
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -139,6 +140,12 @@ enum Commands {
         /// Show progress spinner while compressing
         #[arg(long)]
         progress: bool,
+        /// Cap the number of parallel worker threads (1 forces sequential mode)
+        #[arg(long)]
+        threads: Option<usize>,
+        /// Fraction of available memory reserved for parallel compression (0 < factor ≤ 1)
+        #[arg(long = "parallel-memory-factor", value_name = "FACTOR")]
+        parallel_memory_factor: Option<f64>,
         /// Override segment size limit in bytes (requires --allow-large-segments when above default)
         #[arg(long = "max-segment-bytes", value_name = "BYTES")]
         max_segment_bytes: Option<u64>,
@@ -257,6 +264,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             false,  // force_ndjson
             false,  // force_json_array
             false,  // show_progress
+            None,   // threads
+            None,   // parallel_memory_factor
             None,   // max_segment_bytes
             false,  // allow_large_segments
             false,  // verbose_metrics
@@ -278,6 +287,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             ndjson,
             json_array,
             progress,
+            threads,
+            parallel_memory_factor,
             max_segment_bytes,
             allow_large_segments,
             verbose_metrics,
@@ -294,6 +305,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                 ndjson,
                 json_array,
                 progress,
+                threads,
+                parallel_memory_factor,
                 max_segment_bytes,
                 allow_large_segments,
                 verbose_metrics,
@@ -360,6 +373,8 @@ fn handle_pack(
     force_ndjson: bool,
     force_json_array: bool,
     show_progress: bool,
+    threads: Option<usize>,
+    parallel_memory_factor: Option<f64>,
     max_segment_bytes: Option<u64>,
     allow_large_segments: bool,
     verbose_metrics: bool,
@@ -388,6 +403,46 @@ fn handle_pack(
         limits.max_segment_uncompressed_len = bytes as usize;
     }
 
+    // Track whether users explicitly tweaked parallel heuristics.
+    let explicit_memory_factor = parallel_memory_factor.is_some();
+    let mut parallel_config = ParallelConfig::default();
+    let mut memory_factor = parallel_config.memory_reservation_factor;
+    let mut env_memory_override = false;
+
+    if let Ok(value) = std::env::var("JAC_PARALLEL_MEMORY_FACTOR") {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            let parsed = trimmed.parse::<f64>().map_err(|_| {
+                format!("JAC_PARALLEL_MEMORY_FACTOR must be a positive number (received '{value}')")
+            })?;
+            if !parsed.is_finite() || parsed <= 0.0 {
+                return Err(
+                    "JAC_PARALLEL_MEMORY_FACTOR must be greater than zero and finite".into(),
+                );
+            }
+            memory_factor = parsed.min(1.0);
+            env_memory_override = true;
+        }
+    }
+
+    if let Some(flag_factor) = parallel_memory_factor {
+        if !flag_factor.is_finite() || flag_factor <= 0.0 {
+            return Err("--parallel-memory-factor must be greater than zero and finite".into());
+        }
+        memory_factor = flag_factor.min(1.0);
+        env_memory_override = false;
+    }
+
+    parallel_config.memory_reservation_factor = memory_factor;
+
+    let explicit_threads = threads.is_some();
+    if let Some(thread_cap) = threads {
+        if thread_cap == 0 {
+            return Err("--threads must be greater than zero".into());
+        }
+        parallel_config.max_threads = Some(thread_cap);
+    }
+
     // Store segment limit before moving limits into options
     let segment_limit = limits.max_segment_uncompressed_len;
 
@@ -401,6 +456,7 @@ fn handle_pack(
         nested_opaque: true,
         max_dict_entries,
         limits,
+        parallel_config,
     };
 
     let request = CompressRequest {
@@ -460,6 +516,10 @@ fn handle_pack(
         Err(e) => return Err(e.into()),
     };
 
+    let decision_to_report = summary.parallel_decision.clone();
+    let should_report_decision =
+        verbose_metrics || explicit_threads || explicit_memory_factor || env_memory_override;
+
     let elapsed = start.elapsed();
     let secs = elapsed.as_secs_f64().max(f64::EPSILON);
     let rec_rate = summary.metrics.records_written as f64 / secs;
@@ -475,6 +535,11 @@ fn handle_pack(
             summary.metrics.segment_limit_flushes,
             summary.metrics.segment_limit_record_rejections
         ));
+    }
+    if should_report_decision {
+        if let Some(decision) = decision_to_report.as_ref() {
+            eprintln!("📊 {}", decision.reason);
+        }
     }
     report_compress_summary(
         &summary,
@@ -1647,6 +1712,8 @@ mod tests {
             false,
             false,
             None,
+            None,
+            None,
             false,
             false, // verbose_metrics
         )
@@ -1684,6 +1751,8 @@ mod tests {
             false,
             false,
             false,
+            None,
+            None,
             None,
             false,
             false, // verbose_metrics
@@ -1850,6 +1919,8 @@ mod tests {
             false,  // force_ndjson
             false,  // force_json_array
             false,  // show_progress
+            None,   // threads
+            None,   // parallel_memory_factor
             None,   // max_segment_bytes
             false,  // allow_large_segments
             false,  // verbose_metrics
@@ -1889,6 +1960,8 @@ mod tests {
             false,
             false,
             false,
+            None,
+            None,
             None,
             false,
             false, // verbose_metrics

@@ -31,10 +31,27 @@ use std::{
 };
 
 const SMALL_FILE_THRESHOLD_BYTES: u64 = 10 * 1024 * 1024;
-const MEMORY_RESERVATION_NUMERATOR: u64 = 3;
-const MEMORY_RESERVATION_DENOMINATOR: u64 = 4;
 const MEMORY_PER_THREAD_MULTIPLIER: u64 = 2;
 const MAX_PARALLEL_THREADS: usize = 16;
+const DEFAULT_MEMORY_RESERVATION_FACTOR: f64 = 0.75;
+
+/// Configuration controlling how the parallel compression heuristic behaves.
+#[derive(Debug, Clone, Copy)]
+pub struct ParallelConfig {
+    /// Fraction of available memory considered usable for in-flight blocks.
+    pub memory_reservation_factor: f64,
+    /// Optional cap on worker thread count after applying heuristics.
+    pub max_threads: Option<usize>,
+}
+
+impl Default for ParallelConfig {
+    fn default() -> Self {
+        Self {
+            memory_reservation_factor: DEFAULT_MEMORY_RESERVATION_FACTOR,
+            max_threads: None,
+        }
+    }
+}
 
 /// Decision returned by the parallel heuristic describing whether parallel
 /// compression should be enabled along with diagnostic metadata.
@@ -50,6 +67,10 @@ pub struct ParallelDecision {
     pub estimated_memory: u64,
     /// Available memory reported by the system in bytes.
     pub available_memory: u64,
+    /// Normalized reservation factor that was applied.
+    pub memory_reservation_factor: f64,
+    /// Maximum threads allowed after memory limits (before user caps).
+    pub memory_limited_thread_count: usize,
 }
 
 /// Determine whether parallel compression should be used for the provided
@@ -59,6 +80,7 @@ pub struct ParallelDecision {
 pub(crate) fn should_use_parallel(
     input_source: &InputSource,
     limits: &Limits,
+    config: &ParallelConfig,
 ) -> Result<ParallelDecision> {
     let cores = std::thread::available_parallelism()
         .map(|n| n.get())
@@ -82,6 +104,7 @@ pub(crate) fn should_use_parallel(
         available_memory_bytes,
         limits.max_block_uncompressed_total,
         input_size_hint,
+        config,
     ))
 }
 
@@ -91,6 +114,7 @@ pub(crate) fn should_use_parallel(
 pub(crate) fn should_use_parallel(
     _input_source: &InputSource,
     _limits: &Limits,
+    _config: &ParallelConfig,
 ) -> Result<ParallelDecision> {
     Ok(ParallelDecision {
         use_parallel: false,
@@ -98,6 +122,8 @@ pub(crate) fn should_use_parallel(
         reason: "WASM target does not support parallelism".into(),
         estimated_memory: 0,
         available_memory: 0,
+        memory_reservation_factor: DEFAULT_MEMORY_RESERVATION_FACTOR,
+        memory_limited_thread_count: 1,
     })
 }
 
@@ -106,6 +132,7 @@ fn evaluate_parallel_decision(
     available_memory_bytes: u64,
     max_block_uncompressed_total: usize,
     input_size_hint: Option<u64>,
+    config: &ParallelConfig,
 ) -> ParallelDecision {
     if cores < 2 {
         return ParallelDecision {
@@ -114,17 +141,19 @@ fn evaluate_parallel_decision(
             reason: "Single-core system detected".into(),
             estimated_memory: 0,
             available_memory: available_memory_bytes,
+            memory_reservation_factor: normalized_memory_factor(config.memory_reservation_factor),
+            memory_limited_thread_count: 1,
         };
     }
 
+    let memory_factor = normalized_memory_factor(config.memory_reservation_factor);
     let per_block_memory = std::cmp::max(max_block_uncompressed_total as u64, 1u64);
     let memory_per_thread = std::cmp::max(
         per_block_memory.saturating_mul(MEMORY_PER_THREAD_MULTIPLIER),
         1u64,
     );
 
-    let usable_memory = available_memory_bytes.saturating_mul(MEMORY_RESERVATION_NUMERATOR)
-        / MEMORY_RESERVATION_DENOMINATOR;
+    let usable_memory = (available_memory_bytes as f64 * memory_factor).floor() as u64;
 
     let raw_safe_threads = if memory_per_thread == 0 {
         0
@@ -133,25 +162,41 @@ fn evaluate_parallel_decision(
     };
     let max_safe_threads = std::cmp::max(raw_safe_threads, 1);
 
-    let thread_count = std::cmp::max(
-        1,
-        std::cmp::min(cores, std::cmp::min(max_safe_threads, MAX_PARALLEL_THREADS)),
-    );
+    let memory_limited_threads =
+        std::cmp::min(cores, std::cmp::min(max_safe_threads, MAX_PARALLEL_THREADS));
+    let user_cap = config
+        .max_threads
+        .map(|cap| cap.max(1))
+        .unwrap_or(MAX_PARALLEL_THREADS)
+        .min(MAX_PARALLEL_THREADS);
+
+    let thread_count = std::cmp::max(1, std::cmp::min(memory_limited_threads, user_cap));
 
     if thread_count < 2 {
         let estimated_memory = memory_per_thread.saturating_mul(thread_count as u64);
-        return ParallelDecision {
-            use_parallel: false,
-            thread_count: 1,
-            reason: format!(
-                "Insufficient memory for parallel compression: {} cores available, but only enough memory for {} threads ({:.1} MiB available, {:.1} MiB per thread required)",
+        let reason = if config.max_threads.is_some() && user_cap <= 1 {
+            format!(
+                "Sequential mode forced by thread cap (--threads 1 or equivalent, reservation factor {:.2})",
+                memory_factor,
+            )
+        } else {
+            format!(
+                "Insufficient memory for parallel compression: {} cores available, but only enough memory for {} threads ({:.1} MiB available, {:.1} MiB per thread required, reservation factor {:.2})",
                 cores,
                 max_safe_threads,
                 bytes_to_mib(available_memory_bytes),
                 bytes_to_mib(memory_per_thread),
-            ),
+                memory_factor,
+            )
+        };
+        return ParallelDecision {
+            use_parallel: false,
+            thread_count: 1,
+            reason,
             estimated_memory,
             available_memory: available_memory_bytes,
+            memory_reservation_factor: memory_factor,
+            memory_limited_thread_count: memory_limited_threads,
         };
     }
 
@@ -161,33 +206,61 @@ fn evaluate_parallel_decision(
                 use_parallel: false,
                 thread_count: 1,
                 reason: format!(
-                    "Small input file ({:.1} MiB) - parallel overhead exceeds benefit",
+                    "Small input file ({:.1} MiB) - parallel overhead exceeds benefit (reservation factor {:.2})",
                     bytes_to_mib(size),
+                    memory_factor,
                 ),
                 estimated_memory: per_block_memory,
                 available_memory: available_memory_bytes,
+                memory_reservation_factor: memory_factor,
+                memory_limited_thread_count: memory_limited_threads,
             };
         }
     }
 
     let estimated_memory = memory_per_thread.saturating_mul(thread_count as u64);
+    let reason = if config.max_threads.is_some() && thread_count < memory_limited_threads {
+        format!(
+            "Using {}/{} requested threads (memory allows {}, reservation factor {:.2}, estimated peak {:.1} MiB)",
+            thread_count,
+            user_cap,
+            memory_limited_threads,
+            memory_factor,
+            bytes_to_mib(estimated_memory),
+        )
+    } else {
+        format!(
+            "Using {}/{} cores for parallel compression (reservation factor {:.2}, {:.1} MiB estimated peak memory)",
+            thread_count,
+            cores,
+            memory_factor,
+            bytes_to_mib(estimated_memory),
+        )
+    };
 
     ParallelDecision {
         use_parallel: true,
         thread_count,
-        reason: format!(
-            "Using {}/{} cores for parallel compression ({:.1} MiB estimated peak memory)",
-            thread_count,
-            cores,
-            bytes_to_mib(estimated_memory),
-        ),
+        reason,
         estimated_memory,
         available_memory: available_memory_bytes,
+        memory_reservation_factor: memory_factor,
+        memory_limited_thread_count: memory_limited_threads,
     }
 }
 
 fn bytes_to_mib(bytes: u64) -> f64 {
     bytes as f64 / (1024.0 * 1024.0)
+}
+
+fn normalized_memory_factor(factor: f64) -> f64 {
+    if !factor.is_finite() || factor <= 0.0 {
+        DEFAULT_MEMORY_RESERVATION_FACTOR
+    } else if factor > 1.0 {
+        1.0
+    } else {
+        factor
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -407,7 +480,10 @@ pub(crate) fn execute_compress_parallel(
     let mut metrics = finish.metrics;
     metrics.records_written = records_written;
 
-    Ok(CompressSummary { metrics })
+    Ok(CompressSummary {
+        metrics,
+        parallel_decision: None,
+    })
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -433,6 +509,7 @@ mod tests {
             4 * GIB,
             Limits::default().max_block_uncompressed_total,
             None,
+            &ParallelConfig::default(),
         );
 
         assert!(decision.use_parallel);
@@ -446,6 +523,7 @@ mod tests {
             16 * 1024 * 1024 * 1024,
             Limits::default().max_block_uncompressed_total,
             None,
+            &ParallelConfig::default(),
         );
 
         assert!(!decision.use_parallel);
@@ -459,6 +537,7 @@ mod tests {
             16 * 1024 * 1024 * 1024,
             Limits::default().max_block_uncompressed_total,
             Some(5 * 1024 * 1024),
+            &ParallelConfig::default(),
         );
         assert!(!decision.use_parallel);
         assert_eq!(decision.thread_count, 1);
@@ -471,6 +550,7 @@ mod tests {
             16 * GIB,
             Limits::default().max_block_uncompressed_total,
             None,
+            &ParallelConfig::default(),
         );
         assert!(decision.use_parallel);
         assert!(decision.thread_count >= 2);
@@ -478,7 +558,13 @@ mod tests {
 
     #[test]
     fn low_memory_caps_threads() {
-        let decision = evaluate_parallel_decision(16, 2 * GIB, 256 * 1024 * 1024, None);
+        let decision = evaluate_parallel_decision(
+            16,
+            2 * GIB,
+            256 * 1024 * 1024,
+            None,
+            &ParallelConfig::default(),
+        );
         assert!(decision.use_parallel);
         assert_eq!(decision.thread_count, 3);
     }
@@ -490,6 +576,7 @@ mod tests {
             32 * GIB,
             Limits::default().max_block_uncompressed_total,
             Some(50 * 1024 * 1024),
+            &ParallelConfig::default(),
         );
         assert!(decision.use_parallel);
         assert_eq!(decision.thread_count, 12.min(MAX_PARALLEL_THREADS));
@@ -502,8 +589,59 @@ mod tests {
             128 * 1024 * 1024, // 128 MiB total available
             256 * 1024 * 1024, // 256 MiB per block
             None,
+            &ParallelConfig::default(),
         );
         assert!(!decision.use_parallel);
         assert_eq!(decision.thread_count, 1);
+    }
+
+    #[test]
+    fn user_thread_cap_respected() {
+        let mut config = ParallelConfig::default();
+        config.max_threads = Some(4);
+        let decision = evaluate_parallel_decision(
+            16,
+            32 * GIB,
+            Limits::default().max_block_uncompressed_total,
+            None,
+            &config,
+        );
+        assert!(decision.use_parallel);
+        assert_eq!(decision.thread_count, 4);
+        assert!(decision.memory_limited_thread_count >= decision.thread_count);
+    }
+
+    #[test]
+    fn memory_factor_adjusts_threads() {
+        let default_decision = evaluate_parallel_decision(
+            16,
+            32 * GIB,
+            Limits::default().max_block_uncompressed_total,
+            None,
+            &ParallelConfig::default(),
+        );
+
+        let mut tight_config = ParallelConfig::default();
+        tight_config.memory_reservation_factor = 0.10;
+        let reduced_decision = evaluate_parallel_decision(
+            16,
+            32 * GIB,
+            Limits::default().max_block_uncompressed_total,
+            None,
+            &tight_config,
+        );
+
+        assert!(reduced_decision.use_parallel);
+        assert!(
+            reduced_decision.thread_count < default_decision.thread_count,
+            "expected reduced thread count ({} < {})",
+            reduced_decision.thread_count,
+            default_decision.thread_count
+        );
+        assert!(
+            (reduced_decision.memory_reservation_factor - 0.10).abs() < 1e-6,
+            "expected memory factor ~= 0.10 but was {:.4}",
+            reduced_decision.memory_reservation_factor
+        );
     }
 }

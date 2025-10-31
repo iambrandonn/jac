@@ -363,6 +363,102 @@ fn pack_allows_large_segments_with_confirmation() -> Result<(), Box<dyn Error>> 
 }
 
 #[test]
+fn pack_verbose_reports_parallel_decision() -> Result<(), Box<dyn Error>> {
+    let dir = tempfile::tempdir()?;
+    let input_path = dir.path().join("input.ndjson");
+    let output_path = dir.path().join("output.jac");
+    fs::write(&input_path, "{\"value\":1}\n{\"value\":2}\n{\"value\":3}\n")?;
+
+    assert_cmd::Command::cargo_bin("jac")?
+        .env_remove("JAC_PARALLEL_MEMORY_FACTOR")
+        .args([
+            "pack",
+            input_path.to_str().unwrap(),
+            "-o",
+            output_path.to_str().unwrap(),
+            "--verbose-metrics",
+        ])
+        .assert()
+        .success()
+        .stderr(
+            predicate::str::contains("Small input file")
+                .and(predicate::str::contains("reservation factor 0.75")),
+        );
+    Ok(())
+}
+
+#[test]
+fn pack_threads_one_forces_sequential_message() -> Result<(), Box<dyn Error>> {
+    let dir = tempfile::tempdir()?;
+    let input_path = dir.path().join("input.ndjson");
+    let output_path = dir.path().join("output.jac");
+    fs::write(&input_path, "{\"value\":1}\n{\"value\":2}\n")?;
+
+    assert_cmd::Command::cargo_bin("jac")?
+        .env_remove("JAC_PARALLEL_MEMORY_FACTOR")
+        .args([
+            "pack",
+            input_path.to_str().unwrap(),
+            "-o",
+            output_path.to_str().unwrap(),
+            "--threads",
+            "1",
+        ])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "Sequential mode forced by thread cap",
+        ));
+    Ok(())
+}
+
+#[test]
+fn pack_parallel_memory_factor_flag_reflected_in_reason() -> Result<(), Box<dyn Error>> {
+    let dir = tempfile::tempdir()?;
+    let input_path = dir.path().join("input.ndjson");
+    let output_path = dir.path().join("output.jac");
+    fs::write(&input_path, "{\"value\":1}\n{\"value\":2}\n")?;
+
+    assert_cmd::Command::cargo_bin("jac")?
+        .env_remove("JAC_PARALLEL_MEMORY_FACTOR")
+        .args([
+            "pack",
+            input_path.to_str().unwrap(),
+            "-o",
+            output_path.to_str().unwrap(),
+            "--parallel-memory-factor",
+            "0.6",
+            "--verbose-metrics",
+        ])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("reservation factor 0.60"));
+    Ok(())
+}
+
+#[test]
+fn pack_parallel_memory_factor_env_override_reflected_in_reason() -> Result<(), Box<dyn Error>> {
+    let dir = tempfile::tempdir()?;
+    let input_path = dir.path().join("input.ndjson");
+    let output_path = dir.path().join("output.jac");
+    fs::write(&input_path, "{\"value\":1}\n{\"value\":2}\n")?;
+
+    assert_cmd::Command::cargo_bin("jac")?
+        .env("JAC_PARALLEL_MEMORY_FACTOR", "0.5")
+        .args([
+            "pack",
+            input_path.to_str().unwrap(),
+            "-o",
+            output_path.to_str().unwrap(),
+            "--verbose-metrics",
+        ])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("reservation factor 0.50"));
+    Ok(())
+}
+
+#[test]
 fn spec_fixture_cli_conformance() -> Result<(), Box<dyn Error>> {
     let fixture = spec_fixture_path();
     let expected_records = load_fixture_values(&fixture)?;

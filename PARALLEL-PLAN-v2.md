@@ -1,8 +1,8 @@
 # JAC Parallel Compression Implementation Plan v2
 
-**Status**: Phase 1-3 Complete ✅ | Phase 4-5 In Progress
+**Status**: Phase 1-4 Complete ✅ | Phase 5 In Progress
 **Date**: 2025-10-31
-**Last Updated**: 2025-10-31 (Phase 3 completion)
+**Last Updated**: 2025-02-19 (Phase 4 CLI integration & README update)
 **Supersedes**: PARALLEL-PLAN.md
 **Context**: PLAN.md Phase 7.2 (marked complete but never implemented), addresses PARALLEL-FEEDBACK.md and PARALLEL-FEEDBACK2.md
 
@@ -31,9 +31,11 @@
 - **Details**: See PHASE3-FEEDBACK.md and PHASE3-STAGED-REVIEW.md for full reviews
 - **Grade**: A+ (98%)
 
-### Phase 4: CLI Integration 🚧 **NEXT**
-- **Status**: Ready to start
-- **Blockers**: None - Phase 3 pipeline complete
+### Phase 4: CLI Integration ✅ **COMPLETE** (2025-02-19)
+- **Duration**: 1 day (plus README polish)
+- **Status**: CLI flags, env overrides, heuristic reporting, and tests merged to main
+- **Validation**: `cargo test -p jac-io`, `cargo test -p jac-cli`, manual `--threads` / `--parallel-memory-factor` smoke tests
+- **Details**: Introduced `ParallelConfig`, surfaced CLI controls, wired decision reporting, and documented tuning knobs; remaining doc nits (help/man pages) deferred to Phase 5
 ### Phase 5: Validation & Documentation ⏸️ **PENDING**
 
 ---
@@ -1037,27 +1039,29 @@ fn test_compression_error_propagates() {
 
 **Goal**: Expose automatic parallelism with user control
 
-- [ ] **Add `ParallelConfig` struct** to `jac-io/src/parallel.rs` (addresses PARALLEL-FEEDBACK4.md Q1)
+- [x] **Add `ParallelConfig` struct** to `jac-io/src/parallel.rs` (addresses PARALLEL-FEEDBACK4.md Q1)
   - `memory_reservation_factor: f64` (default 0.75)
   - `max_threads: Option<usize>`
   - Add to `CompressOptions` or pass separately
-- [ ] Update `PackCmd` in `jac-cli/src/main.rs`:
-  - [ ] Add `--threads N` optional argument (caps auto-detection)
-  - [ ] Add `--parallel-memory-factor 0.6` optional argument (default 0.75)
-  - [ ] Remove old `--parallel` flag if it exists (breaking change, note in CHANGELOG)
-- [ ] Modify `handle_pack()`:
-  - [ ] Read `JAC_PARALLEL_MEMORY_FACTOR` environment variable (runtime override)
-  - [ ] Call `should_use_parallel()` with ParallelConfig
-  - [ ] Apply user's `--threads` preference as upper bound
-  - [ ] Print decision reason if `--verbose-metrics` (including memory factor used)
-- [ ] Update CLI tests to verify:
-  - [ ] Auto-detection works
-  - [ ] `--threads 1` forces sequential
-  - [ ] `--threads N` caps parallel workers
-  - [ ] `--parallel-memory-factor 0.6` reduces thread count
-  - [ ] `JAC_PARALLEL_MEMORY_FACTOR=0.5` environment variable works
-  - [ ] Small files stay sequential
-- [ ] Update CLI help text, man pages, and README.md
+- [x] Update `PackCmd` in `jac-cli/src/main.rs`:
+  - [x] Add `--threads N` optional argument (caps auto-detection)
+  - [x] Add `--parallel-memory-factor 0.6` optional argument (default 0.75)
+  - [x] Remove old `--parallel` flag if it exists (none present, confirmed)
+- [x] Modify `handle_pack()`:
+  - [x] Read `JAC_PARALLEL_MEMORY_FACTOR` environment variable (runtime override)
+  - [x] Call `should_use_parallel()` with ParallelConfig
+  - [x] Apply user's `--threads` preference as upper bound
+  - [x] Print decision reason if `--verbose-metrics` (including memory factor used)
+- [x] Update CLI tests to verify:
+  - [x] Auto-detection works
+  - [x] `--threads 1` forces sequential
+  - [x] `--threads N` caps parallel workers
+  - [x] `--parallel-memory-factor 0.6` reduces thread count
+  - [x] `JAC_PARALLEL_MEMORY_FACTOR=0.5` environment variable works
+  - [x] Small files stay sequential
+- [ ] Update CLI help text
+- [ ] Update man pages
+- [x] Update README.md with parallel flag documentation
 
 **CLI test**:
 ```bash
@@ -1101,10 +1105,10 @@ $ jac pack large.ndjson --threads 1
   - Test with different `--parallel-memory-factor` values
 - [ ] Update `PLAN.md` Phase 7.2 to mark tasks complete
 - [ ] Update `README.md` with parallelism documentation:
-  - Document `--threads` flag
-  - Document `--parallel-memory-factor` flag
-  - Document `JAC_PARALLEL_MEMORY_FACTOR` environment variable
-  - Show example usage for container/cgroup environments
+  - [x] Document `--threads` flag
+  - [x] Document `--parallel-memory-factor` flag
+  - [x] Document `JAC_PARALLEL_MEMORY_FACTOR` environment variable
+  - [ ] Show example usage for container/cgroup environments
 - [ ] Add performance section to `SPEC.md` Addendum
 - [ ] Update CHANGELOG with new CLI flags and breaking changes
 

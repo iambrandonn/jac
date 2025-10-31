@@ -1,8 +1,8 @@
 use jac_format::Limits;
 use jac_io::{
-    execute_compress, execute_decompress, execute_project, CompressOptions, CompressRequest,
-    ContainerFormat, DecompressFormat, DecompressOptions, DecompressRequest, InputSource, JacInput,
-    OutputSink, ProjectFormat, ProjectRequest,
+    execute_compress, execute_decompress, execute_project, parallel::ParallelConfig,
+    CompressOptions, CompressRequest, ContainerFormat, DecompressFormat, DecompressOptions,
+    DecompressRequest, InputSource, JacInput, OutputSink, ProjectFormat, ProjectRequest,
 };
 use serde_json::{Map, Value};
 use std::sync::{Arc, Mutex};
@@ -158,6 +158,7 @@ impl ConcurrencyStressTest {
                     nested_opaque: true,
                     max_dict_entries: 4096,
                     limits: Limits::default(),
+                    parallel_config: ParallelConfig::default(),
                 };
 
                 let request = CompressRequest {
@@ -447,6 +448,7 @@ mod tests {
             nested_opaque: true,
             max_dict_entries: 4096,
             limits: Limits::default(),
+            parallel_config: ParallelConfig::default(),
         };
 
         let request = CompressRequest {
@@ -500,6 +502,7 @@ mod tests {
             nested_opaque: true,
             max_dict_entries: 4096,
             limits: Limits::default(),
+            parallel_config: ParallelConfig::default(),
         };
 
         let request = CompressRequest {
