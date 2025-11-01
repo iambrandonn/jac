@@ -172,6 +172,40 @@ enum Commands {
             requires = "wrapper_pointer"
         )]
         wrapper_pointer_buffer: Option<String>,
+        /// Section names for multi-section wrapper (e.g., users admins guests)
+        #[arg(
+            long = "wrapper-sections",
+            value_name = "NAME",
+            num_args = 1..,
+            conflicts_with = "wrapper_pointer"
+        )]
+        wrapper_sections: Option<Vec<String>>,
+        /// Custom pointer for a section (format: name=/pointer/path)
+        #[arg(
+            long = "wrapper-section-pointer",
+            value_name = "NAME=POINTER",
+            requires = "wrapper_sections"
+        )]
+        wrapper_section_pointer: Option<Vec<String>>,
+        /// Field name for injected section label (default: _section)
+        #[arg(
+            long = "wrapper-section-label-field",
+            value_name = "FIELD",
+            requires = "wrapper_sections"
+        )]
+        wrapper_section_label_field: Option<String>,
+        /// Disable section label injection
+        #[arg(
+            long = "wrapper-section-no-label",
+            requires = "wrapper_sections"
+        )]
+        wrapper_section_no_label: bool,
+        /// Error when a section is not found (default: skip missing sections)
+        #[arg(
+            long = "wrapper-sections-missing-error",
+            requires = "wrapper_sections"
+        )]
+        wrapper_sections_missing_error: bool,
     },
     /// Decompress .jac to JSON/NDJSON
     Unpack {
@@ -289,6 +323,11 @@ fn main() -> Result<(), Box<dyn Error>> {
             None,   // wrapper_pointer
             None,   // wrapper_pointer_depth
             None,   // wrapper_pointer_buffer
+            None,   // wrapper_sections
+            None,   // wrapper_section_pointer
+            None,   // wrapper_section_label_field
+            false,  // wrapper_section_no_label
+            false,  // wrapper_sections_missing_error
         )?;
         return Ok(());
     }
@@ -315,6 +354,11 @@ fn main() -> Result<(), Box<dyn Error>> {
             wrapper_pointer,
             wrapper_pointer_depth,
             wrapper_pointer_buffer,
+            wrapper_sections,
+            wrapper_section_pointer,
+            wrapper_section_label_field,
+            wrapper_section_no_label,
+            wrapper_sections_missing_error,
         }) => {
             handle_pack(
                 input,
@@ -336,6 +380,11 @@ fn main() -> Result<(), Box<dyn Error>> {
                 wrapper_pointer,
                 wrapper_pointer_depth,
                 wrapper_pointer_buffer,
+                wrapper_sections,
+                wrapper_section_pointer,
+                wrapper_section_label_field,
+                wrapper_section_no_label,
+                wrapper_sections_missing_error,
             )?;
         }
         Some(Commands::Unpack {
@@ -407,6 +456,11 @@ fn handle_pack(
     wrapper_pointer: Option<String>,
     wrapper_pointer_depth: Option<usize>,
     wrapper_pointer_buffer: Option<String>,
+    wrapper_sections: Option<Vec<String>>,
+    wrapper_section_pointer: Option<Vec<String>>,
+    wrapper_section_label_field: Option<String>,
+    wrapper_section_no_label: bool,
+    wrapper_sections_missing_error: bool,
 ) -> Result<(), Box<dyn Error>> {
     let start = Instant::now();
     let mut limits = Limits::default();
@@ -489,7 +543,7 @@ fn handle_pack(
     };
 
     // Parse wrapper configuration if provided
-    use jac_io::{WrapperConfig, WrapperLimits};
+    use jac_io::{MissingSectionBehavior, SectionSpec, WrapperConfig, WrapperLimits};
 
     let wrapper_config = if let Some(pointer) = wrapper_pointer {
         let mut wrapper_limits = WrapperLimits::default();
@@ -531,6 +585,58 @@ fn handle_pack(
         WrapperConfig::Pointer {
             path: pointer,
             limits: wrapper_limits,
+        }
+    } else if let Some(section_names) = wrapper_sections {
+        // Parse sections configuration
+        let wrapper_limits = WrapperLimits::default();
+
+        // Parse custom pointers for sections
+        let mut custom_pointers: HashMap<String, String> = HashMap::new();
+        if let Some(pointer_specs) = wrapper_section_pointer {
+            for spec in pointer_specs {
+                let parts: Vec<&str> = spec.splitn(2, '=').collect();
+                if parts.len() != 2 {
+                    return Err(format!(
+                        "Invalid section pointer format '{}'. Expected: name=/pointer/path",
+                        spec
+                    )
+                    .into());
+                }
+                custom_pointers.insert(parts[0].to_string(), parts[1].to_string());
+            }
+        }
+
+        // Build section specs
+        let mut sections = Vec::new();
+        for name in section_names {
+            let pointer = custom_pointers
+                .get(&name)
+                .cloned()
+                .unwrap_or_else(|| format!("/{}", name));
+
+            sections.push(SectionSpec {
+                name: name.clone(),
+                pointer,
+                label: None, // Use section name as label by default
+            });
+        }
+
+        if sections.is_empty() {
+            return Err("--wrapper-sections requires at least one section name".into());
+        }
+
+        let missing_behavior = if wrapper_sections_missing_error {
+            MissingSectionBehavior::Error
+        } else {
+            MissingSectionBehavior::Skip
+        };
+
+        WrapperConfig::Sections {
+            entries: sections,
+            limits: wrapper_limits,
+            label_field: wrapper_section_label_field,
+            inject_label: !wrapper_section_no_label,
+            missing_behavior,
         }
     } else {
         WrapperConfig::None
@@ -872,11 +978,16 @@ fn report_compress_summary(
             "  Buffer peak: {:.2} MiB",
             metrics.buffer_peak_bytes as f64 / (1024.0 * 1024.0)
         )?;
-        writeln!(
-            &mut stderr,
-            "  Records emitted: {}",
+
+        // Calculate total from section_counts instead of using records_emitted
+        // (which is captured before stream iteration and always shows 0)
+        let total_records = if let Some(ref section_counts) = metrics.section_counts {
+            section_counts.iter().map(|(_, count)| count).sum::<usize>()
+        } else {
             metrics.records_emitted
-        )?;
+        };
+        writeln!(&mut stderr, "  Records emitted: {}", total_records)?;
+
         writeln!(
             &mut stderr,
             "  Processing time: {:?}",
@@ -884,6 +995,12 @@ fn report_compress_summary(
         )?;
         if let Some(path) = &metrics.pointer_path {
             writeln!(&mut stderr, "  Pointer path: {}", path)?;
+        }
+        if let Some(section_counts) = &metrics.section_counts {
+            writeln!(&mut stderr, "  Section record counts:")?;
+            for (section_name, count) in section_counts {
+                writeln!(&mut stderr, "    {}: {}", section_name, count)?;
+            }
         }
     }
 
@@ -1920,6 +2037,11 @@ mod tests {
             None,  // wrapper_pointer
             None,  // wrapper_pointer_depth
             None,  // wrapper_pointer_buffer
+            None,  // wrapper_sections
+            None,  // wrapper_section_pointer
+            None,  // wrapper_section_label_field
+            false, // wrapper_section_no_label
+            false, // wrapper_sections_missing_error
         )
         .unwrap();
 
@@ -1963,6 +2085,11 @@ mod tests {
             None,  // wrapper_pointer
             None,  // wrapper_pointer_depth
             None,  // wrapper_pointer_buffer
+            None,  // wrapper_sections
+            None,  // wrapper_section_pointer
+            None,  // wrapper_section_label_field
+            false, // wrapper_section_no_label
+            false, // wrapper_sections_missing_error
         )
         .unwrap();
 
@@ -2134,6 +2261,11 @@ mod tests {
             None,   // wrapper_pointer
             None,   // wrapper_pointer_depth
             None,   // wrapper_pointer_buffer
+            None,   // wrapper_sections
+            None,   // wrapper_section_pointer
+            None,   // wrapper_section_label_field
+            false,  // wrapper_section_no_label
+            false,  // wrapper_sections_missing_error
         )
         .unwrap();
 
@@ -2178,6 +2310,11 @@ mod tests {
             None,  // wrapper_pointer
             None,  // wrapper_pointer_depth
             None,  // wrapper_pointer_buffer
+            None,  // wrapper_sections
+            None,  // wrapper_section_pointer
+            None,  // wrapper_section_label_field
+            false, // wrapper_section_no_label
+            false, // wrapper_sections_missing_error
         )
         .unwrap();
 

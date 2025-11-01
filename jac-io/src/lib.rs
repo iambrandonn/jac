@@ -23,7 +23,7 @@ use reader::BlockCursor;
 pub use reader::{
     BlockHandle, FieldIterator, JacReader, ProjectionStream, RecordStream as ReaderRecordStream,
 };
-pub use wrapper::{PointerArrayStream, WrapperError};
+pub use wrapper::{PointerArrayStream, SectionsStream, WrapperError};
 pub use writer::{JacWriter, WriterFinish, WriterMetrics};
 
 use runtime::RuntimeMeasurement;
@@ -196,6 +196,32 @@ impl WrapperLimits {
     }
 }
 
+/// Specification for a single section in multi-section wrapper mode.
+#[derive(Debug, Clone)]
+pub struct SectionSpec {
+    /// Name of the section (used for identification)
+    pub name: String,
+    /// JSON Pointer path to the section data
+    pub pointer: String,
+    /// Optional label to inject into records from this section
+    pub label: Option<String>,
+}
+
+/// Behavior when a section is not found in the input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MissingSectionBehavior {
+    /// Skip the section silently (default)
+    Skip,
+    /// Return an error
+    Error,
+}
+
+impl Default for MissingSectionBehavior {
+    fn default() -> Self {
+        MissingSectionBehavior::Skip
+    }
+}
+
 /// Configuration for JSON wrapper preprocessing.
 #[derive(Debug, Clone)]
 pub enum WrapperConfig {
@@ -207,6 +233,19 @@ pub enum WrapperConfig {
         path: String,
         /// Limits for this wrapper
         limits: WrapperLimits,
+    },
+    /// Multi-section array concatenation
+    Sections {
+        /// Section specifications (order determines output order)
+        entries: Vec<SectionSpec>,
+        /// Limits for this wrapper
+        limits: WrapperLimits,
+        /// Field name for injected section label (default: "_section")
+        label_field: Option<String>,
+        /// Whether to inject section labels into records (default: true)
+        inject_label: bool,
+        /// Behavior when a section is not found
+        missing_behavior: MissingSectionBehavior,
     },
 }
 
@@ -229,6 +268,8 @@ pub struct WrapperMetrics {
     pub processing_duration: std::time::Duration,
     /// Pointer path (if applicable)
     pub pointer_path: Option<String>,
+    /// Section-specific record counts (if applicable)
+    pub section_counts: Option<Vec<(String, usize)>>,
 }
 
 /// Sources that can feed records into compression.
@@ -782,6 +823,51 @@ impl InputSource {
                     records_emitted: stream.metrics().records_emitted,
                     processing_duration: stream.metrics().processing_duration,
                     pointer_path: Some(path.clone()),
+                    section_counts: None,
+                };
+
+                Ok(RecordStream::wrapper(Box::new(stream), metrics))
+            }
+            WrapperConfig::Sections {
+                entries,
+                limits,
+                label_field,
+                inject_label,
+                missing_behavior,
+            } => {
+                // Apply sections wrapper
+                use wrapper::sections::SectionsStream;
+
+                let reader: Box<dyn Read + Send> = match self {
+                    InputSource::NdjsonPath(p) => Box::new(File::open(p)?),
+                    InputSource::JsonArrayPath(p) => Box::new(File::open(p)?),
+                    InputSource::NdjsonReader(r) => r,
+                    InputSource::JsonArrayReader(r) => r,
+                    InputSource::Iterator(_) => {
+                        return Err(JacError::Internal(
+                            "Wrapper configuration cannot be applied to Iterator input source"
+                                .to_string(),
+                        ));
+                    }
+                };
+
+                let stream = SectionsStream::new(
+                    reader,
+                    entries.clone(),
+                    limits.clone(),
+                    label_field.clone(),
+                    *inject_label,
+                    *missing_behavior,
+                )
+                .map_err(|e| JacError::Internal(format!("Wrapper error: {}", e)))?;
+
+                let metrics = WrapperMetrics {
+                    mode: "sections".to_string(),
+                    buffer_peak_bytes: stream.metrics().peak_buffer_bytes,
+                    records_emitted: stream.metrics().records_emitted,
+                    processing_duration: stream.metrics().processing_duration,
+                    pointer_path: None,
+                    section_counts: Some(stream.metrics().section_counts.clone()),
                 };
 
                 Ok(RecordStream::wrapper(Box::new(stream), metrics))

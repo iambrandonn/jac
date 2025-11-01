@@ -232,6 +232,54 @@ tag_bytes = ((3 * present_count) + 7) >> 3
 - [ ] Regression tests (NDJSON/array without wrapper unchanged)
 - [ ] Error message quality (actionable remediation hints)
 
+**Wrapper Mode Examples:**
+
+1. **Pointer Mode (Phase 1 - ✅ Complete)**
+   ```bash
+   # Input: {"data": [{"id": 1}, {"id": 2}]}
+   jac pack api.json -o output.jac --wrapper-pointer /data
+
+   # Decompression: jac unpack output.jac
+   # Output: NDJSON stream with flattened records (envelope lost)
+   # {"id": 1}
+   # {"id": 2}
+   ```
+
+2. **Sections Mode (Phase 2 - ✅ Complete)**
+   ```bash
+   # Input: {"users": [{"id": 1, "name": "alice"}], "admins": [{"id": 2, "name": "bob"}]}
+   jac pack input.json -o output.jac --wrapper-sections users admins
+
+   # Output records include "_section" field:
+   # {"id": 1, "name": "alice", "_section": "users"}
+   # {"id": 2, "name": "bob", "_section": "admins"}
+
+   # Decompression: jac unpack output.jac
+   # Yields flattened NDJSON (envelope lost, section labels preserved)
+
+   # Custom label field:
+   jac pack input.json -o output.jac \
+     --wrapper-sections users admins \
+     --wrapper-section-label-field source
+   # Records: {"id": 1, "name": "alice", "source": "users"}
+
+   # Disable label injection:
+   jac pack input.json -o output.jac \
+     --wrapper-sections users admins \
+     --wrapper-section-no-label
+   # Records: {"id": 1, "name": "alice"} (no "_section" field)
+   ```
+
+3. **KeyedMap Mode (Phase 3 - ⏳ Not Yet Implemented)**
+   ```bash
+   # Input: {"alice": {"age": 30}, "bob": {"age": 25}}
+   jac pack input.json -o output.jac --wrapper-map
+
+   # Expected output:
+   # {"_key": "alice", "age": 30}
+   # {"_key": "bob", "age": 25}
+   ```
+
 ---
 
 ## Testing Strategy
@@ -524,9 +572,22 @@ jac unpack file.jac -o debug.ndjson --ndjson
 - ✅ Test fixtures for all wrapper scenarios (envelopes, escaped keys, error cases)
 - ✅ Comprehensive documentation in README.md and AGENTS.md
 
-**Upcoming Focus (Wrapper Phase 2):**
-1. Implement Sections mode for multi-array concatenation with label injection
-2. Add `--wrapper-sections` CLI flags and section-specific configuration
-3. Test section ordering, missing sections, and label collision handling
+**Completed in Phase 10 (Wrapper Support - Phase 2):**
+- ✅ `SectionSpec` and `MissingSectionBehavior` types added to `jac-io/src/lib.rs`
+- ✅ `WrapperConfig::Sections` variant with full configuration support
+- ✅ `WrapperMetrics::section_counts` field for per-section record tracking
+- ✅ Section-specific errors: `SectionNotFound`, `SectionLabelCollision` in `WrapperError`
+- ✅ `SectionsStream` iterator in `jac-io/src/wrapper/sections.rs` with buffered parsing
+- ✅ Section stream integrated into `InputSource::into_record_stream()`
+- ✅ CLI flags: `--wrapper-sections`, `--wrapper-section-pointer`, `--wrapper-section-label-field`, `--wrapper-section-no-label`, `--wrapper-sections-missing-error`
+- ✅ Section metrics displayed in verbose CLI output
+- ✅ 9 unit tests covering concatenation, labels, missing sections, empty arrays, and error cases
+- ✅ 9 integration tests covering CLI usage, flag validation, conflicts, and custom pointers
+- ✅ Test fixtures for sections mode (`jac-cli/tests/fixtures/wrapper/sections_basic.json`)
 
-**Last Updated:** 2025-10-31 (Phase 9 – Wrapper Phase 1 complete: JSON Pointer extraction)
+**Upcoming Focus (Wrapper Phase 3):**
+1. Implement KeyedMap mode for flattening object-of-objects
+2. Add `--wrapper-map` CLI flags and key field configuration
+3. Test key collision handling and nested pointer maps
+
+**Last Updated:** 2025-11-01 (Phase 10 – Wrapper Phase 2 complete: Multi-section array concatenation)

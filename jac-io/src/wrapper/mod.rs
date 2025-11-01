@@ -7,7 +7,7 @@
 //! # Supported Wrapper Types
 //!
 //! - **Pointer**: Navigate to a nested array using RFC 6901 JSON Pointers
-//! - **Sections** (Phase 2): Concatenate multiple named arrays
+//! - **Sections**: Concatenate multiple named arrays from a single object
 //! - **KeyedMap** (Phase 3): Flatten object-of-objects into records
 //!
 //! # Security & Limits
@@ -25,7 +25,9 @@
 
 pub mod error;
 pub mod pointer;
+pub mod sections;
 pub mod utils;
 
 pub use error::WrapperError;
 pub use pointer::PointerArrayStream;
+pub use sections::SectionsStream;

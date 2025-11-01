@@ -133,6 +133,44 @@ pub enum WrapperError {
         max_ptr_len: usize,
     },
 
+    /// Section not found in input document
+    #[error(
+        "Section not found: '{section}' at pointer '{pointer}' does not exist.\n\
+         \n\
+         Available keys at this level: {available_keys}\n\
+         \n\
+         Suggested fixes:\n\
+         1. Check section name spelling\n\
+         2. Verify input structure matches expected format\n\
+         3. Use --wrapper-sections-missing-skip to allow missing sections"
+    )]
+    SectionNotFound {
+        /// Name of the section that was not found
+        section: String,
+        /// JSON Pointer path that was used
+        pointer: String,
+        /// Comma-separated list of keys available at the target location
+        available_keys: String,
+    },
+
+    /// Section label field collision
+    #[error(
+        "Section label collision: field '{field}' already exists in record from section '{section}'.\n\
+         \n\
+         The wrapper tried to inject section label into field '{field}', but this field\n\
+         already exists in the source record.\n\
+         \n\
+         Suggested fixes:\n\
+         1. Choose a different label field: --wrapper-section-label-field <field>\n\
+         2. Disable label injection: --wrapper-section-no-label"
+    )]
+    SectionLabelCollision {
+        /// Field name that collided
+        field: String,
+        /// Section that caused the collision
+        section: String,
+    },
+
     /// JSON parsing error during wrapper traversal
     #[error("JSON parse error while processing wrapper: {context} - {source}")]
     JsonParse {

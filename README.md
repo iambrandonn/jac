@@ -131,7 +131,7 @@ If you need to preserve the envelope:
 | Envelope < 50 MiB, target array near start | ✅ Use `--wrapper-pointer` |
 | Envelope > 50 MiB before target data | ⚠️ Preprocess with `jq` or `mlr` |
 | Need to preserve envelope structure | ❌ Archive original separately |
-| Multiple target arrays (e.g., users + admins) | ⏳ Wait for Phase 2 (Sections mode) |
+| Multiple target arrays (e.g., users + admins) | ✅ Use `--wrapper-sections users admins` |
 | Dictionary-style objects (`{id: {...}}`) | ⏳ Wait for Phase 3 (Map mode) |
 
 ### Performance
@@ -161,6 +161,44 @@ Suggested fixes:
 - Null and scalar values are not supported as wrapper targets
 
 See [RFC 6901](https://tools.ietf.org/html/rfc6901) for complete JSON Pointer syntax details.
+
+### Multi-Section Arrays
+
+Concatenate multiple named arrays from a single object:
+
+```bash
+# Input: {"users": [{"id": 1}, {"id": 2}], "guests": [{"id": 3}]}
+jac pack data.json -o output.jac --wrapper-sections users guests
+
+# With custom pointers
+jac pack api.json -o output.jac \
+  --wrapper-sections users admins \
+  --wrapper-section-pointer users=/data/active \
+  --wrapper-section-pointer admins=/data/privileged
+
+# Disable automatic section labels
+jac pack data.json -o output.jac \
+  --wrapper-sections users guests \
+  --wrapper-section-no-label
+
+# Custom label field name
+jac pack data.json -o output.jac \
+  --wrapper-sections users guests \
+  --wrapper-section-label-field source
+
+# Error on missing sections
+jac pack data.json -o output.jac \
+  --wrapper-sections users guests admins \
+  --wrapper-sections-missing-error
+```
+
+**Notes:**
+- Section order determines record order in output
+- Missing sections are skipped by default (use `--wrapper-sections-missing-error` to fail)
+- Labels are injected into records by default (field: `_section`, customizable via `--wrapper-section-label-field`)
+- Label injection can be disabled with `--wrapper-section-no-label`
+- All sections must contain arrays of objects
+- The entire top-level object is buffered in memory; for very large envelopes (>50 MiB), consider preprocessing with `jq`
 
 ## Architecture
 
