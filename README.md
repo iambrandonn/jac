@@ -88,6 +88,80 @@ project(input, output, &["userId", "timestamp"], true)?;
 
 > **Sampling note:** `jac ls --stats` inspects up to 50k values per field by default (tunable via `--stats-sample <N>`) to avoid re-reading massive segments; verbose output and JSON/table stats indicate when sampling occurs.
 
+## Wrapper Support
+
+JAC can preprocess wrapped/enveloped JSON structures before compression using JSON Pointer notation (RFC 6901). This allows you to compress nested API responses and data exports without manual preprocessing.
+
+### Basic Usage
+
+Extract an array nested inside an envelope:
+
+```bash
+# Input: {"data": [{"id": 1}, {"id": 2}]}
+jac pack input.json -o output.jac --wrapper-pointer /data
+```
+
+### Nested Pointers
+
+Navigate multiple levels:
+
+```bash
+# Input: {"api": {"v1": {"results": [...]}}}
+jac pack api-response.json -o output.jac --wrapper-pointer /api/v1/results
+```
+
+### Configuration Flags
+
+- `--wrapper-pointer <PATH>` - RFC 6901 JSON Pointer to target array/object
+- `--wrapper-pointer-depth <N>` - Max traversal depth (default: 3, max: 10)
+- `--wrapper-pointer-buffer <SIZE>` - Buffer limit (default: 16M, max: 128M)
+
+### ⚠️ Important Limitations
+
+**Wrappers are preprocessing transformations.** The original envelope structure is **not preserved** in the `.jac` file. Running `jac unpack` will output flattened records only.
+
+If you need to preserve the envelope:
+1. Archive the original JSON file separately, or
+2. Use external preprocessing: `jq '.data | .[]' input.json | jac pack --ndjson -o output.jac`
+
+### When to Use Wrappers vs Preprocessing
+
+| Scenario | Recommendation |
+|----------|---------------|
+| Envelope < 50 MiB, target array near start | ✅ Use `--wrapper-pointer` |
+| Envelope > 50 MiB before target data | ⚠️ Preprocess with `jq` or `mlr` |
+| Need to preserve envelope structure | ❌ Archive original separately |
+| Multiple target arrays (e.g., users + admins) | ⏳ Wait for Phase 2 (Sections mode) |
+| Dictionary-style objects (`{id: {...}}`) | ⏳ Wait for Phase 3 (Map mode) |
+
+### Performance
+
+Wrapper traversal is serial and happens before compression:
+- Buffer memory ≈ envelope size (up to configured limit)
+- Overhead ≈ 100-500ms for typical API responses
+- Use `--verbose-metrics` to see actual buffer usage and processing time
+
+### Troubleshooting
+
+**Error: Buffer limit exceeded**
+```
+Suggested fixes:
+  1. Increase buffer: --wrapper-pointer-buffer 32M
+  2. Preprocess with jq: jq '.data | .[]' input.json | jac pack --ndjson -o output.jac
+```
+
+**Error: Pointer not found**
+- Check pointer syntax (must start with `/` unless empty for root)
+- Verify path exists in input JSON
+- Use escaped characters: `~0` for `~`, `~1` for `/`
+- Example: `/field~1name` matches key `field/name`
+
+**Error: Wrong type (null/scalar)**
+- Wrappers can only extract arrays (streaming elements) or objects (single record)
+- Null and scalar values are not supported as wrapper targets
+
+See [RFC 6901](https://tools.ietf.org/html/rfc6901) for complete JSON Pointer syntax details.
+
 ## Architecture
 
 JAC is implemented as a Rust workspace with four main crates:

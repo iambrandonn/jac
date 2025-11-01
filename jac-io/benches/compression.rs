@@ -1,7 +1,7 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use jac_io::{
     execute_compress, parallel::ParallelConfig, Codec, CompressOptions, CompressRequest,
-    InputSource, OutputSink,
+    InputSource, OutputSink, WrapperConfig,
 };
 use serde_json::json;
 use std::io::{Cursor, Write};
@@ -91,6 +91,7 @@ fn bench_compression_throughput(c: &mut Criterion) {
                     options: CompressOptions::default(),
                     container_hint: Some(jac_format::ContainerFormat::Ndjson),
                     emit_index: false,
+                    wrapper_config: WrapperConfig::None,
                 };
 
                 black_box(execute_compress(request).unwrap());
@@ -125,6 +126,7 @@ fn bench_block_size_impact(c: &mut Criterion) {
                         options,
                         container_hint: Some(jac_format::ContainerFormat::Ndjson),
                         emit_index: false,
+                        wrapper_config: WrapperConfig::None,
                     };
 
                     black_box(execute_compress(request).unwrap());
@@ -160,6 +162,7 @@ fn bench_zstd_levels(c: &mut Criterion) {
                         options,
                         container_hint: Some(jac_format::ContainerFormat::Ndjson),
                         emit_index: false,
+                        wrapper_config: WrapperConfig::None,
                     };
 
                     black_box(execute_compress(request).unwrap());
@@ -215,6 +218,7 @@ fn benchmark_parallel_config(c: &mut Criterion, group_name: &str, codec: Codec) 
                         options,
                         container_hint: Some(jac_format::ContainerFormat::Ndjson),
                         emit_index: false,
+                        wrapper_config: WrapperConfig::None,
                     };
 
                     black_box(execute_compress(request).unwrap());

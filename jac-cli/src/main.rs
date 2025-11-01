@@ -155,6 +155,23 @@ enum Commands {
         /// Display per-field metrics in summary (flush/rejection counts, max segment sizes)
         #[arg(long = "verbose-metrics")]
         verbose_metrics: bool,
+        /// JSON Pointer path to array/object to extract (RFC 6901 format, e.g., /data or /api/v1/results)
+        #[arg(long = "wrapper-pointer", value_name = "POINTER")]
+        wrapper_pointer: Option<String>,
+        /// Maximum depth for JSON Pointer traversal (default: 3, max: 10)
+        #[arg(
+            long = "wrapper-pointer-depth",
+            value_name = "DEPTH",
+            requires = "wrapper_pointer"
+        )]
+        wrapper_pointer_depth: Option<usize>,
+        /// Buffer size limit for wrapper preprocessing (default: 16M, max: 128M)
+        #[arg(
+            long = "wrapper-pointer-buffer",
+            value_name = "SIZE",
+            requires = "wrapper_pointer"
+        )]
+        wrapper_pointer_buffer: Option<String>,
     },
     /// Decompress .jac to JSON/NDJSON
     Unpack {
@@ -269,6 +286,9 @@ fn main() -> Result<(), Box<dyn Error>> {
             None,   // max_segment_bytes
             false,  // allow_large_segments
             false,  // verbose_metrics
+            None,   // wrapper_pointer
+            None,   // wrapper_pointer_depth
+            None,   // wrapper_pointer_buffer
         )?;
         return Ok(());
     }
@@ -292,6 +312,9 @@ fn main() -> Result<(), Box<dyn Error>> {
             max_segment_bytes,
             allow_large_segments,
             verbose_metrics,
+            wrapper_pointer,
+            wrapper_pointer_depth,
+            wrapper_pointer_buffer,
         }) => {
             handle_pack(
                 input,
@@ -310,6 +333,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                 max_segment_bytes,
                 allow_large_segments,
                 verbose_metrics,
+                wrapper_pointer,
+                wrapper_pointer_depth,
+                wrapper_pointer_buffer,
             )?;
         }
         Some(Commands::Unpack {
@@ -378,6 +404,9 @@ fn handle_pack(
     max_segment_bytes: Option<u64>,
     allow_large_segments: bool,
     verbose_metrics: bool,
+    wrapper_pointer: Option<String>,
+    wrapper_pointer_depth: Option<usize>,
+    wrapper_pointer_buffer: Option<String>,
 ) -> Result<(), Box<dyn Error>> {
     let start = Instant::now();
     let mut limits = Limits::default();
@@ -459,12 +488,61 @@ fn handle_pack(
         parallel_config,
     };
 
+    // Parse wrapper configuration if provided
+    use jac_io::{WrapperConfig, WrapperLimits};
+
+    let wrapper_config = if let Some(pointer) = wrapper_pointer {
+        let mut wrapper_limits = WrapperLimits::default();
+
+        // Parse depth override
+        if let Some(depth) = wrapper_pointer_depth {
+            let hard_max_depth = WrapperLimits::hard_maximums().max_depth;
+            if depth == 0 {
+                return Err("--wrapper-pointer-depth must be at least 1".into());
+            }
+            if depth > hard_max_depth {
+                return Err(format!(
+                    "--wrapper-pointer-depth {} exceeds hard maximum {} (security limit)",
+                    depth, hard_max_depth
+                )
+                .into());
+            }
+            wrapper_limits.max_depth = depth;
+        }
+
+        // Parse buffer size override
+        if let Some(buffer_str) = wrapper_pointer_buffer {
+            let buffer_bytes = parse_size(&buffer_str)?;
+            let hard_max_buffer = WrapperLimits::hard_maximums().max_buffer_bytes;
+            if buffer_bytes == 0 {
+                return Err("--wrapper-pointer-buffer must be greater than zero".into());
+            }
+            if buffer_bytes > hard_max_buffer {
+                return Err(format!(
+                    "--wrapper-pointer-buffer {} exceeds hard maximum {} (security limit)",
+                    format_size(buffer_bytes),
+                    format_size(hard_max_buffer)
+                )
+                .into());
+            }
+            wrapper_limits.max_buffer_bytes = buffer_bytes;
+        }
+
+        WrapperConfig::Pointer {
+            path: pointer,
+            limits: wrapper_limits,
+        }
+    } else {
+        WrapperConfig::None
+    };
+
     let request = CompressRequest {
         input: input_source,
         output: OutputSink::Path(output.clone()),
         options,
         container_hint,
         emit_index,
+        wrapper_config,
     };
 
     let mut progress_bar = show_progress.then(|| create_spinner("Compressing records"));
@@ -702,7 +780,7 @@ fn report_compress_summary(
     summary: &CompressSummary,
     output: &Path,
     verbose_metrics: bool,
-    block_records: usize,
+    _block_records: usize,
     segment_limit: usize,
 ) -> Result<(), Box<dyn Error>> {
     let mut stderr = std::io::stderr().lock();
@@ -778,6 +856,34 @@ fn report_compress_summary(
                 "  Field '{}': {} flushes, {} rejections, max segment {:.2} MiB",
                 field_name, metrics.flush_count, metrics.rejection_count, max_mb
             )?;
+        }
+    }
+
+    // Display wrapper metrics if preprocessing was used
+    if let Some(metrics) = &summary.wrapper_metrics {
+        writeln!(&mut stderr)?;
+        writeln!(
+            &mut stderr,
+            "Wrapper preprocessing (mode: {}):",
+            metrics.mode
+        )?;
+        writeln!(
+            &mut stderr,
+            "  Buffer peak: {:.2} MiB",
+            metrics.buffer_peak_bytes as f64 / (1024.0 * 1024.0)
+        )?;
+        writeln!(
+            &mut stderr,
+            "  Records emitted: {}",
+            metrics.records_emitted
+        )?;
+        writeln!(
+            &mut stderr,
+            "  Processing time: {:?}",
+            metrics.processing_duration
+        )?;
+        if let Some(path) = &metrics.pointer_path {
+            writeln!(&mut stderr, "  Pointer path: {}", path)?;
         }
     }
 
@@ -1721,6 +1827,64 @@ fn create_spinner(message: &str) -> ProgressBar {
     pb
 }
 
+/// Parse a size string like "16M", "128K", "1G" into bytes
+fn parse_size(size_str: &str) -> Result<usize, Box<dyn Error>> {
+    let size_str = size_str.trim();
+    if size_str.is_empty() {
+        return Err("Size string cannot be empty".into());
+    }
+
+    let (number_part, suffix) = if let Some(last_char) = size_str.chars().last() {
+        if last_char.is_ascii_alphabetic() {
+            (
+                &size_str[..size_str.len() - 1],
+                Some(last_char.to_ascii_uppercase()),
+            )
+        } else {
+            (size_str, None)
+        }
+    } else {
+        (size_str, None)
+    };
+
+    let number: f64 = number_part
+        .parse()
+        .map_err(|_| format!("Invalid number in size string: '{}'", size_str))?;
+
+    if number < 0.0 {
+        return Err("Size cannot be negative".into());
+    }
+
+    let multiplier = match suffix {
+        None => 1,
+        Some('K') => 1024,
+        Some('M') => 1024 * 1024,
+        Some('G') => 1024 * 1024 * 1024,
+        Some(c) => return Err(format!("Unknown size suffix '{}'. Use K, M, or G", c).into()),
+    };
+
+    let bytes = (number * multiplier as f64) as usize;
+    Ok(bytes)
+}
+
+/// Format bytes as human-readable size
+fn format_size(bytes: usize) -> String {
+    const KIB: f64 = 1024.0;
+    const MIB: f64 = KIB * 1024.0;
+    const GIB: f64 = MIB * 1024.0;
+
+    let b = bytes as f64;
+    if b >= GIB {
+        format!("{:.1}G", b / GIB)
+    } else if b >= MIB {
+        format!("{:.1}M", b / MIB)
+    } else if b >= KIB {
+        format!("{:.1}K", b / KIB)
+    } else {
+        format!("{}", bytes)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1753,6 +1917,9 @@ mod tests {
             None,
             false,
             false, // verbose_metrics
+            None,  // wrapper_pointer
+            None,  // wrapper_pointer_depth
+            None,  // wrapper_pointer_buffer
         )
         .unwrap();
 
@@ -1793,6 +1960,9 @@ mod tests {
             None,
             false,
             false, // verbose_metrics
+            None,  // wrapper_pointer
+            None,  // wrapper_pointer_depth
+            None,  // wrapper_pointer_buffer
         )
         .unwrap();
 
@@ -1961,6 +2131,9 @@ mod tests {
             None,   // max_segment_bytes
             false,  // allow_large_segments
             false,  // verbose_metrics
+            None,   // wrapper_pointer
+            None,   // wrapper_pointer_depth
+            None,   // wrapper_pointer_buffer
         )
         .unwrap();
 
@@ -2002,6 +2175,9 @@ mod tests {
             None,
             false,
             false, // verbose_metrics
+            None,  // wrapper_pointer
+            None,  // wrapper_pointer_depth
+            None,  // wrapper_pointer_buffer
         )
         .unwrap();
 

@@ -11,7 +11,7 @@ use jac_format::{
 use jac_io::{
     execute_compress, execute_decompress, execute_project, CompressOptions, CompressRequest,
     ContainerFormat, DecompressFormat, DecompressOptions, DecompressRequest, InputSource, JacInput,
-    JacReader, OutputSink, ProjectFormat, ProjectRequest,
+    JacReader, OutputSink, ProjectFormat, ProjectRequest, WrapperConfig,
 };
 use serde_json::{json, Map, Value};
 use std::io::Cursor;
@@ -187,6 +187,7 @@ impl ErrorTestMatrix {
             options: CompressOptions::default(),
             container_hint: Some(ContainerFormat::JsonArray),
             emit_index: true,
+            wrapper_config: WrapperConfig::None,
         };
 
         match execute_compress(request) {
@@ -298,6 +299,7 @@ impl ErrorTestMatrix {
             options: CompressOptions::default(),
             container_hint: None,
             emit_index: false,
+            wrapper_config: WrapperConfig::None,
         };
 
         match execute_compress(request) {
@@ -338,6 +340,7 @@ impl ErrorTestMatrix {
             options: CompressOptions::default(),
             container_hint: Some(ContainerFormat::Ndjson),
             emit_index: false,
+            wrapper_config: WrapperConfig::None,
         };
 
         match execute_compress(request) {

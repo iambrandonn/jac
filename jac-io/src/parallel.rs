@@ -275,11 +275,13 @@ pub(crate) fn execute_compress_parallel(
         options,
         container_hint,
         emit_index,
+        wrapper_config,
     } = request;
 
-    let record_stream = input.into_record_stream()?;
+    let mut record_stream = input.into_record_stream(&wrapper_config)?;
     let detected_hint = record_stream.container_format();
     let final_hint = container_hint.unwrap_or(detected_hint);
+    let wrapper_metrics = record_stream.take_wrapper_metrics();
 
     let writer_target = output.into_writer()?;
     let buf_writer = BufWriter::new(writer_target);
@@ -486,6 +488,7 @@ pub(crate) fn execute_compress_parallel(
         metrics,
         parallel_decision: None,
         runtime_stats,
+        wrapper_metrics,
     })
 }
 

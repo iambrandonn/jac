@@ -3,6 +3,7 @@ use jac_io::{
     execute_compress, execute_decompress, execute_project, parallel::ParallelConfig,
     CompressOptions, CompressRequest, ContainerFormat, DecompressFormat, DecompressOptions,
     DecompressRequest, InputSource, JacInput, OutputSink, ProjectFormat, ProjectRequest,
+    WrapperConfig,
 };
 use serde_json::{Map, Value};
 use std::sync::{Arc, Mutex};
@@ -167,6 +168,7 @@ impl ConcurrencyStressTest {
                     options,
                     container_hint: Some(ContainerFormat::Ndjson),
                     emit_index: true,
+                    wrapper_config: WrapperConfig::None,
                 };
 
                 let start = std::time::Instant::now();
@@ -457,6 +459,7 @@ mod tests {
             options,
             container_hint: Some(ContainerFormat::Ndjson),
             emit_index: true,
+            wrapper_config: WrapperConfig::None,
         };
 
         execute_compress(request).unwrap();
@@ -511,6 +514,7 @@ mod tests {
             options,
             container_hint: Some(ContainerFormat::Ndjson),
             emit_index: true,
+            wrapper_config: WrapperConfig::None,
         };
 
         execute_compress(request).unwrap();

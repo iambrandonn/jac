@@ -13,6 +13,7 @@
 pub mod parallel;
 pub mod reader;
 pub(crate) mod runtime;
+pub mod wrapper;
 pub mod writer;
 
 // Re-export commonly used types
@@ -22,6 +23,7 @@ use reader::BlockCursor;
 pub use reader::{
     BlockHandle, FieldIterator, JacReader, ProjectionStream, RecordStream as ReaderRecordStream,
 };
+pub use wrapper::{PointerArrayStream, WrapperError};
 pub use writer::{JacWriter, WriterFinish, WriterMetrics};
 
 use runtime::RuntimeMeasurement;
@@ -122,6 +124,113 @@ impl Default for DecompressOptions {
     }
 }
 
+/// Wrapper-specific limits enforced during input preprocessing.
+#[derive(Debug, Clone)]
+pub struct WrapperLimits {
+    /// Maximum JSON pointer depth (default: 3, hard max: 10).
+    pub max_depth: usize,
+    /// Maximum bytes buffered before reaching target (default: 16 MiB, hard max: 128 MiB).
+    pub max_buffer_bytes: usize,
+    /// Maximum pointer string length (default: 256, hard max: 2048).
+    pub max_pointer_length: usize,
+}
+
+impl Default for WrapperLimits {
+    fn default() -> Self {
+        Self {
+            max_depth: 3,
+            max_buffer_bytes: 16 * 1024 * 1024,
+            max_pointer_length: 256,
+        }
+    }
+}
+
+impl WrapperLimits {
+    /// Hard maximum limits that cannot be exceeded
+    pub fn hard_maximums() -> Self {
+        Self {
+            max_depth: 10,
+            max_buffer_bytes: 128 * 1024 * 1024,
+            max_pointer_length: 2048,
+        }
+    }
+
+    /// Validate limits against hard maximums
+    pub fn validate(&self) -> std::result::Result<(), WrapperError> {
+        let hard = Self::hard_maximums();
+
+        if self.max_depth > hard.max_depth {
+            return Err(WrapperError::ConfigurationExceedsHardLimits {
+                reason: format!("max_depth {} exceeds {}", self.max_depth, hard.max_depth),
+                max_depth: hard.max_depth,
+                max_buffer: hard.max_buffer_bytes,
+                max_ptr_len: hard.max_pointer_length,
+            });
+        }
+
+        if self.max_buffer_bytes > hard.max_buffer_bytes {
+            return Err(WrapperError::ConfigurationExceedsHardLimits {
+                reason: format!(
+                    "max_buffer_bytes {} exceeds {}",
+                    self.max_buffer_bytes, hard.max_buffer_bytes
+                ),
+                max_depth: hard.max_depth,
+                max_buffer: hard.max_buffer_bytes,
+                max_ptr_len: hard.max_pointer_length,
+            });
+        }
+
+        if self.max_pointer_length > hard.max_pointer_length {
+            return Err(WrapperError::ConfigurationExceedsHardLimits {
+                reason: format!(
+                    "max_pointer_length {} exceeds {}",
+                    self.max_pointer_length, hard.max_pointer_length
+                ),
+                max_depth: hard.max_depth,
+                max_buffer: hard.max_buffer_bytes,
+                max_ptr_len: hard.max_pointer_length,
+            });
+        }
+
+        Ok(())
+    }
+}
+
+/// Configuration for JSON wrapper preprocessing.
+#[derive(Debug, Clone)]
+pub enum WrapperConfig {
+    /// No wrapper preprocessing
+    None,
+    /// JSON Pointer-based envelope extraction
+    Pointer {
+        /// RFC 6901 JSON Pointer path
+        path: String,
+        /// Limits for this wrapper
+        limits: WrapperLimits,
+    },
+}
+
+impl Default for WrapperConfig {
+    fn default() -> Self {
+        WrapperConfig::None
+    }
+}
+
+/// Metrics captured during wrapper preprocessing.
+#[derive(Debug, Clone)]
+pub struct WrapperMetrics {
+    /// Wrapper mode used
+    pub mode: String,
+    /// Peak buffer bytes used
+    pub buffer_peak_bytes: usize,
+    /// Records emitted after unwrapping
+    pub records_emitted: usize,
+    /// Time spent in wrapper processing
+    pub processing_duration: std::time::Duration,
+    /// Pointer path (if applicable)
+    pub pointer_path: Option<String>,
+}
+
 /// Sources that can feed records into compression.
 pub enum InputSource {
     /// NDJSON file path.
@@ -189,6 +298,8 @@ pub struct CompressRequest {
     pub container_hint: Option<ContainerFormat>,
     /// Emit index footer/pointer when finishing.
     pub emit_index: bool,
+    /// Wrapper configuration for input preprocessing.
+    pub wrapper_config: WrapperConfig,
 }
 
 impl Default for CompressRequest {
@@ -199,6 +310,7 @@ impl Default for CompressRequest {
             options: CompressOptions::default(),
             container_hint: None,
             emit_index: true,
+            wrapper_config: WrapperConfig::None,
         }
     }
 }
@@ -238,6 +350,8 @@ pub struct CompressSummary {
     pub parallel_decision: Option<parallel::ParallelDecision>,
     /// Wall-clock and memory statistics gathered during compression.
     pub runtime_stats: CompressionRuntimeStats,
+    /// Wrapper preprocessing metrics (if wrapper was used).
+    pub wrapper_metrics: Option<WrapperMetrics>,
 }
 
 /// Runtime statistics captured during compression.
@@ -333,11 +447,13 @@ pub(crate) fn execute_compress_sequential(request: CompressRequest) -> Result<Co
         options,
         container_hint,
         emit_index,
+        wrapper_config,
     } = request;
 
-    let stream = input.into_record_stream()?;
+    let mut stream = input.into_record_stream(&wrapper_config)?;
     let detected_hint = stream.container_format();
     let final_hint = container_hint.unwrap_or(detected_hint);
+    let wrapper_metrics = stream.take_wrapper_metrics();
     let writer_target = output.into_writer()?;
     let buf_writer = BufWriter::new(writer_target);
     let header = build_file_header(&options, Some(final_hint))?;
@@ -375,6 +491,7 @@ pub(crate) fn execute_compress_sequential(request: CompressRequest) -> Result<Co
         metrics: finish.metrics,
         parallel_decision: None,
         runtime_stats,
+        wrapper_metrics,
     })
 }
 
@@ -567,6 +684,7 @@ where
         options: opts,
         container_hint: Some(ContainerFormat::Ndjson),
         emit_index: true,
+        wrapper_config: WrapperConfig::None,
     };
     execute_compress(request).map(|_| ())
 }
@@ -609,21 +727,65 @@ where
 }
 
 impl InputSource {
-    pub(crate) fn into_record_stream(self) -> Result<RecordStream> {
-        match self {
-            InputSource::NdjsonPath(path) => {
-                let file = File::open(path)?;
-                Ok(RecordStream::ndjson(BufReader::new(file)))
+    pub(crate) fn into_record_stream(self, wrapper_config: &WrapperConfig) -> Result<RecordStream> {
+        // Apply wrapper if configured
+        match wrapper_config {
+            WrapperConfig::None => {
+                // No wrapper, use standard streams
+                match self {
+                    InputSource::NdjsonPath(path) => {
+                        let file = File::open(path)?;
+                        Ok(RecordStream::ndjson(BufReader::new(file)))
+                    }
+                    InputSource::JsonArrayPath(path) => {
+                        let file = File::open(path)?;
+                        RecordStream::json_array_reader(BufReader::new(file))
+                    }
+                    InputSource::NdjsonReader(reader) => {
+                        Ok(RecordStream::ndjson(BufReader::new(reader)))
+                    }
+                    InputSource::JsonArrayReader(reader) => {
+                        RecordStream::json_array_reader(BufReader::new(reader))
+                    }
+                    InputSource::Iterator(iter) => Ok(RecordStream::iter(iter)),
+                }
             }
-            InputSource::JsonArrayPath(path) => {
-                let file = File::open(path)?;
-                RecordStream::json_array_reader(BufReader::new(file))
+            WrapperConfig::Pointer { path, limits } => {
+                // Apply pointer wrapper
+                use wrapper::pointer::{PointerArrayStream, PointerLimits};
+
+                let reader: Box<dyn Read + Send> = match self {
+                    InputSource::NdjsonPath(p) => Box::new(File::open(p)?),
+                    InputSource::JsonArrayPath(p) => Box::new(File::open(p)?),
+                    InputSource::NdjsonReader(r) => r,
+                    InputSource::JsonArrayReader(r) => r,
+                    InputSource::Iterator(_) => {
+                        return Err(JacError::Internal(
+                            "Wrapper configuration cannot be applied to Iterator input source"
+                                .to_string(),
+                        ));
+                    }
+                };
+
+                let pointer_limits = PointerLimits {
+                    max_depth: limits.max_depth,
+                    max_buffer_bytes: limits.max_buffer_bytes,
+                    max_pointer_length: limits.max_pointer_length,
+                };
+
+                let stream = PointerArrayStream::new(reader, path.clone(), pointer_limits)
+                    .map_err(|e| JacError::Internal(format!("Wrapper error: {}", e)))?;
+
+                let metrics = WrapperMetrics {
+                    mode: "pointer".to_string(),
+                    buffer_peak_bytes: stream.metrics().peak_buffer_bytes,
+                    records_emitted: stream.metrics().records_emitted,
+                    processing_duration: stream.metrics().processing_duration,
+                    pointer_path: Some(path.clone()),
+                };
+
+                Ok(RecordStream::wrapper(Box::new(stream), metrics))
             }
-            InputSource::NdjsonReader(reader) => Ok(RecordStream::ndjson(BufReader::new(reader))),
-            InputSource::JsonArrayReader(reader) => {
-                RecordStream::json_array_reader(BufReader::new(reader))
-            }
-            InputSource::Iterator(iter) => Ok(RecordStream::iter(iter)),
         }
     }
 }
@@ -696,12 +858,14 @@ fn csv_cell_value(value: &Value) -> String {
 struct RecordStream {
     inner: RecordStreamInner,
     format: ContainerFormat,
+    wrapper_metrics: Option<WrapperMetrics>,
 }
 
 enum RecordStreamInner {
     Ndjson(NdjsonStream),
     JsonArray(JsonArrayStream),
     Iterator(Box<dyn Iterator<Item = Map<String, Value>> + Send>),
+    Wrapper(Box<dyn Iterator<Item = std::result::Result<Map<String, Value>, WrapperError>> + Send>),
 }
 
 impl RecordStream {
@@ -712,6 +876,7 @@ impl RecordStream {
                 buffer: String::new(),
             }),
             format: ContainerFormat::Ndjson,
+            wrapper_metrics: None,
         }
     }
 
@@ -720,6 +885,7 @@ impl RecordStream {
         Ok(Self {
             inner: RecordStreamInner::JsonArray(stream),
             format: ContainerFormat::JsonArray,
+            wrapper_metrics: None,
         })
     }
 
@@ -727,11 +893,29 @@ impl RecordStream {
         Self {
             inner: RecordStreamInner::Iterator(iter),
             format: ContainerFormat::Unknown,
+            wrapper_metrics: None,
+        }
+    }
+
+    fn wrapper(
+        iter: Box<
+            dyn Iterator<Item = std::result::Result<Map<String, Value>, WrapperError>> + Send,
+        >,
+        metrics: WrapperMetrics,
+    ) -> Self {
+        Self {
+            inner: RecordStreamInner::Wrapper(iter),
+            format: ContainerFormat::JsonArray, // Wrappers always produce array-like output
+            wrapper_metrics: Some(metrics),
         }
     }
 
     fn container_format(&self) -> ContainerFormat {
         self.format
+    }
+
+    fn take_wrapper_metrics(&mut self) -> Option<WrapperMetrics> {
+        self.wrapper_metrics.take()
     }
 }
 
@@ -743,6 +927,9 @@ impl Iterator for RecordStream {
             RecordStreamInner::Ndjson(stream) => stream.next(),
             RecordStreamInner::JsonArray(stream) => stream.next(),
             RecordStreamInner::Iterator(iter) => iter.next().map(Ok),
+            RecordStreamInner::Wrapper(iter) => iter
+                .next()
+                .map(|r| r.map_err(|e| JacError::Internal(format!("Wrapper error: {}", e)))),
         }
     }
 }
@@ -1015,7 +1202,7 @@ mod tests {
     fn ndjson_input_streams_records() {
         let data = "{\"a\":1}\n{\"b\":2}\n";
         let mut stream = InputSource::NdjsonReader(Box::new(data.as_bytes()))
-            .into_record_stream()
+            .into_record_stream(&WrapperConfig::None)
             .unwrap();
         let first = stream.next().unwrap().unwrap();
         assert_eq!(first.get("a").unwrap(), &Value::from(1));
@@ -1029,7 +1216,7 @@ mod tests {
         let data = r#"[{"a":1},{"b":2}]"#;
         let reader = Cursor::new(data.as_bytes().to_vec());
         let mut stream = InputSource::JsonArrayReader(Box::new(reader))
-            .into_record_stream()
+            .into_record_stream(&WrapperConfig::None)
             .unwrap();
         let first = stream.next().unwrap().unwrap();
         assert_eq!(first.get("a").unwrap(), &Value::from(1));
@@ -1043,7 +1230,7 @@ mod tests {
         let data = "\u{feff}{\"a\":1}\r\n\r\n{\"b\":2}\n{\"c\":3}";
         let reader = Cursor::new(data.as_bytes().to_vec());
         let mut stream = InputSource::NdjsonReader(Box::new(reader))
-            .into_record_stream()
+            .into_record_stream(&WrapperConfig::None)
             .unwrap();
 
         let first = stream.next().unwrap().unwrap();
@@ -1071,6 +1258,7 @@ mod tests {
             options: CompressOptions::default(),
             container_hint: None,
             emit_index: true,
+            wrapper_config: WrapperConfig::None,
         };
 
         execute_compress(compress_request).unwrap();
@@ -1101,6 +1289,7 @@ mod tests {
             options: CompressOptions::default(),
             container_hint: None,
             emit_index: true,
+            wrapper_config: WrapperConfig::None,
         };
         execute_compress(compress_request).unwrap();
 
@@ -1154,6 +1343,7 @@ mod tests {
             options: CompressOptions::default(),
             container_hint: Some(ContainerFormat::JsonArray),
             emit_index: true,
+            wrapper_config: WrapperConfig::None,
         };
         execute_compress(compress_request).unwrap();
 
@@ -1192,6 +1382,7 @@ mod tests {
             options,
             container_hint: Some(ContainerFormat::Ndjson),
             emit_index: false,
+            wrapper_config: WrapperConfig::None,
         };
 
         let summary = execute_compress(request).expect("compress succeeds");
@@ -1245,6 +1436,7 @@ mod tests {
             options: base_options.clone(),
             container_hint: Some(ContainerFormat::Ndjson),
             emit_index: true,
+            wrapper_config: WrapperConfig::None,
         };
         let seq_summary = execute_compress_sequential(sequential_request).unwrap();
 
@@ -1254,6 +1446,7 @@ mod tests {
             options: base_options,
             container_hint: Some(ContainerFormat::Ndjson),
             emit_index: true,
+            wrapper_config: WrapperConfig::None,
         };
         let par_summary = crate::parallel::execute_compress_parallel(parallel_request, 2).unwrap();
 
@@ -1319,6 +1512,7 @@ mod tests {
             options: options.clone(),
             container_hint: Some(ContainerFormat::Ndjson),
             emit_index: true,
+            wrapper_config: WrapperConfig::None,
         };
         execute_compress_sequential(sequential_request).unwrap();
 
@@ -1328,6 +1522,7 @@ mod tests {
             options,
             container_hint: Some(ContainerFormat::Ndjson),
             emit_index: true,
+            wrapper_config: WrapperConfig::None,
         };
         crate::parallel::execute_compress_parallel(parallel_request, 2).unwrap();
 
@@ -1363,6 +1558,7 @@ mod tests {
             options: options.clone(),
             container_hint: Some(ContainerFormat::Ndjson),
             emit_index: false,
+            wrapper_config: WrapperConfig::None,
         };
 
         let seq_error = execute_compress_sequential(sequential_request).unwrap_err();
@@ -1377,6 +1573,7 @@ mod tests {
             options,
             container_hint: Some(ContainerFormat::Ndjson),
             emit_index: false,
+            wrapper_config: WrapperConfig::None,
         };
 
         let par_error =
@@ -1450,6 +1647,7 @@ mod tests {
             options: CompressOptions::default(),
             container_hint: Some(ContainerFormat::JsonArray),
             emit_index: true,
+            wrapper_config: WrapperConfig::None,
         };
         execute_compress(compress_request).unwrap();
 
@@ -1490,6 +1688,7 @@ mod tests {
                 options: CompressOptions::default(),
                 container_hint: None,
                 emit_index: true,
+                wrapper_config: WrapperConfig::None,
             };
 
             super::async_io::compress(compress_request)

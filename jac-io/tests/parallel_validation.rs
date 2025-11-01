@@ -2,7 +2,7 @@ use jac_format::Result;
 use jac_io::{
     execute_compress, execute_decompress, parallel::ParallelConfig, CompressOptions,
     CompressRequest, CompressSummary, ContainerFormat, DecompressFormat, DecompressOptions,
-    DecompressRequest, InputSource, JacInput, OutputSink,
+    DecompressRequest, InputSource, JacInput, OutputSink, WrapperConfig,
 };
 use serde_json::{Map, Value};
 use std::fs;
@@ -63,6 +63,7 @@ fn compress_with_threads(
         options,
         container_hint: Some(ContainerFormat::Ndjson),
         emit_index: false,
+        wrapper_config: WrapperConfig::None,
     };
 
     let summary = execute_compress(request)?;

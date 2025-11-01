@@ -45,6 +45,11 @@ jac/
 │  ├─ writer.rs        # JacWriter (streaming encoder)
 │  ├─ reader.rs        # JacReader (streaming decoder)
 │  ├─ parallel.rs      # Rayon-based parallelism
+│  ├─ wrapper/         # Input preprocessing (Phase 1: Pointer mode)
+│  │  ├─ mod.rs        # Module documentation and exports
+│  │  ├─ error.rs      # WrapperError with remediation helpers
+│  │  ├─ pointer.rs    # RFC 6901 JSON Pointer envelope extraction
+│  │  └─ utils.rs      # Shared pointer parsing and navigation
 │  └─ lib.rs           # High-level APIs (compress, decompress, project)
 │
 └─ jac-cli/            # Command-line tool
@@ -180,6 +185,52 @@ tag_bytes = ((3 * present_count) + 7) >> 3
 2. Implement handler using high-level APIs from `jac-io`
 3. Add integration test in `jac-cli/tests/`
 4. Update README.md with usage example
+
+### Working with Wrappers
+
+**Overview:** Wrappers are input preprocessing transformations for enveloped JSON. They extract target arrays/objects before compression. The original envelope structure is NOT preserved in .jac files.
+
+**Key Concepts:**
+
+1. **Wrappers vs Core Format**
+   - Wrappers are input-only preprocessing (not part of .jac encoding)
+   - Output is always flattened records
+   - Use `WrapperConfig` enum to specify mode (None, Pointer, Sections, KeyedMap)
+
+2. **Limit Relationships**
+   - `WrapperLimits`: Input preprocessing limits (depth, buffer, pointer length)
+   - `Limits`: Output encoding limits (segment size, records per block)
+   - Both must be enforced independently
+
+3. **Phase Status**
+   - Phase 1 (✅): Pointer mode - RFC 6901 JSON Pointer extraction
+   - Phase 2 (⏳): Sections mode - Multi-array concatenation
+   - Phase 3 (⏳): KeyedMap mode - Flatten object-of-objects
+
+**Module Structure (`jac-io/src/wrapper/`):**
+- `mod.rs` - Public exports and module docs
+- `error.rs` - `WrapperError` with actionable remediation suggestions
+- `pointer.rs` - `PointerArrayStream` implementing RFC 6901 extraction
+- `utils.rs` - Shared utilities (pointer parsing, navigation, validation)
+
+**Adding a New Wrapper Mode (Future):**
+
+1. Add variant to `WrapperConfig` enum in `jac-io/src/lib.rs`
+2. Create new file in `jac-io/src/wrapper/` (e.g., `sections.rs`)
+3. Implement iterator that yields `serde_json::Map<String, Value>`
+4. Update `InputSource::into_record_stream()` match to handle new mode
+5. Add CLI flags with `requires`/`conflicts_with` attributes
+6. Create integration test file in `jac-cli/tests/`
+7. Add test fixtures in `jac-cli/tests/fixtures/wrapper/`
+8. Update README.md and AGENTS.md with examples
+
+**Testing Checklist for Wrappers:**
+- [ ] Unit tests in wrapper module (parsing, validation, limits)
+- [ ] Integration tests with real JSON fixtures (success + error cases)
+- [ ] CLI flag validation (depth, buffer, pointer length limits)
+- [ ] Security tests (exceed hard limits, malicious inputs)
+- [ ] Regression tests (NDJSON/array without wrapper unchanged)
+- [ ] Error message quality (actionable remediation hints)
 
 ---
 
@@ -459,9 +510,23 @@ jac unpack file.jac -o debug.ndjson --ndjson
 - ✅ `--stats` flag delivering per-field null/absent/type breakdowns (`jac-cli/src/main.rs`, `jac-cli/tests/cli.rs`)
 - ✅ Container format hint recorded in header flags (bits 3–4) with CLI auto-selection of NDJSON vs JSON array on unpack.
 
-**Upcoming Focus (Phase 8 Week 3):**
-1. Evaluate further reuse opportunities for block decoding in `--stats` (avoid repeated decompression when fields share blocks)
-2. Polish CLI docs/help text (README/manpages) and align SPEC references (CLI usage, --progress/`--stats-sample` examples)
-3. Prep for Phase 9 benchmarking and broader conformance/fuzz testing once documentation polish lands
+**Completed in Phase 9 (Wrapper Support - Phase 1):**
+- ✅ `WrapperConfig` and `WrapperLimits` structs with default and hard limits (`jac-io/src/lib.rs`)
+- ✅ `RecordStreamInner::Wrapper` variant for wrapped stream integration
+- ✅ `wrapper` module with clean separation: `mod.rs`, `error.rs`, `pointer.rs`, `utils.rs`
+- ✅ RFC 6901 JSON Pointer parsing with escape handling (~0, ~1) and validation
+- ✅ Depth/buffer/pointer-length enforcement (default: 3/16M/256, hard max: 10/128M/2048)
+- ✅ CLI flags: `--wrapper-pointer`, `--wrapper-pointer-depth`, `--wrapper-pointer-buffer`
+- ✅ `WrapperMetrics` captured and displayed in CLI verbose output
+- ✅ Container hint records `JsonArray` when wrapper is used
+- ✅ 28 unit tests covering parsing, validation, limits, and RFC 6901 compliance
+- ✅ 13 integration tests covering success cases, error cases, and CLI flag validation
+- ✅ Test fixtures for all wrapper scenarios (envelopes, escaped keys, error cases)
+- ✅ Comprehensive documentation in README.md and AGENTS.md
 
-**Last Updated:** 2025-02-18 (Phase 8 – Week 2 progress: throughput metrics & stats sampling)
+**Upcoming Focus (Wrapper Phase 2):**
+1. Implement Sections mode for multi-array concatenation with label injection
+2. Add `--wrapper-sections` CLI flags and section-specific configuration
+3. Test section ordering, missing sections, and label collision handling
+
+**Last Updated:** 2025-10-31 (Phase 9 – Wrapper Phase 1 complete: JSON Pointer extraction)

@@ -2,7 +2,7 @@ use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criteri
 use jac_io::{
     execute_compress, execute_decompress, execute_project, CompressOptions, CompressRequest,
     DecompressFormat, DecompressOptions, DecompressRequest, InputSource, JacInput, OutputSink,
-    ProjectFormat, ProjectRequest,
+    ProjectFormat, ProjectRequest, WrapperConfig,
 };
 use serde_json::json;
 use std::io::{Cursor, Write};
@@ -39,6 +39,7 @@ fn compress_data(data: &[u8]) -> Vec<u8> {
         options: CompressOptions::default(),
         container_hint: Some(jac_format::ContainerFormat::Ndjson),
         emit_index: false,
+        wrapper_config: WrapperConfig::None,
     };
 
     execute_compress(request).unwrap();

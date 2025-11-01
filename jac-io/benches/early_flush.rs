@@ -1,6 +1,8 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use jac_format::Limits;
-use jac_io::{execute_compress, CompressOptions, CompressRequest, InputSource, OutputSink};
+use jac_io::{
+    execute_compress, CompressOptions, CompressRequest, InputSource, OutputSink, WrapperConfig,
+};
 use serde_json::json;
 use std::io::{Cursor, Write};
 
@@ -72,6 +74,7 @@ fn bench_early_flush_impact(c: &mut Criterion) {
                     options,
                     container_hint: Some(jac_format::ContainerFormat::Ndjson),
                     emit_index: false,
+                    wrapper_config: WrapperConfig::None,
                 };
 
                 let summary = execute_compress(request).unwrap();
@@ -122,6 +125,7 @@ fn bench_block_size_vs_segment_limit(c: &mut Criterion) {
                     options,
                     container_hint: Some(jac_format::ContainerFormat::Ndjson),
                     emit_index: false,
+                    wrapper_config: WrapperConfig::None,
                 };
 
                 black_box(execute_compress(request).unwrap());
@@ -163,6 +167,7 @@ fn bench_growing_field_impact(c: &mut Criterion) {
                     options,
                     container_hint: Some(jac_format::ContainerFormat::Ndjson),
                     emit_index: false,
+                    wrapper_config: WrapperConfig::None,
                 };
 
                 black_box(execute_compress(request).unwrap());
