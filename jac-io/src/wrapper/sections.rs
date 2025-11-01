@@ -60,9 +60,9 @@ impl SectionsStream {
         // Read entire input into buffer (with size limit enforcement)
         let mut buffer = Vec::new();
         let mut limited_reader = reader.take(limits.max_buffer_bytes as u64 + 1);
-        limited_reader.read_to_end(&mut buffer).map_err(|e| {
-            WrapperError::Io(e)
-        })?;
+        limited_reader
+            .read_to_end(&mut buffer)
+            .map_err(|e| WrapperError::Io(e))?;
 
         // Check if we exceeded the buffer limit
         if buffer.len() > limits.max_buffer_bytes {
@@ -78,21 +78,21 @@ impl SectionsStream {
         let peak_buffer_bytes = buffer.len();
 
         // Parse as JSON object
-        let document: Value = serde_json::from_slice(&buffer).map_err(|e| {
-            WrapperError::JsonParse {
+        let document: Value =
+            serde_json::from_slice(&buffer).map_err(|e| WrapperError::JsonParse {
                 context: "parsing top-level document for sections".to_string(),
                 source: e,
-            }
-        })?;
+            })?;
 
         // Ensure top-level is an object
-        let _root_obj = document.as_object().ok_or_else(|| {
-            WrapperError::PointerTargetWrongType {
-                pointer: "/".to_string(),
-                expected_type: "object".to_string(),
-                found_type: type_name(&document).to_string(),
-            }
-        })?;
+        let _root_obj =
+            document
+                .as_object()
+                .ok_or_else(|| WrapperError::PointerTargetWrongType {
+                    pointer: "/".to_string(),
+                    expected_type: "object".to_string(),
+                    found_type: type_name(&document).to_string(),
+                })?;
 
         // Extract sections
         let mut extracted_sections = Vec::new();
@@ -133,31 +133,38 @@ impl SectionsStream {
             };
 
             // Ensure section is an array
-            let section_array = section_value.as_array().ok_or_else(|| {
-                WrapperError::PointerTargetWrongType {
-                    pointer: section_spec.pointer.clone(),
-                    expected_type: "array".to_string(),
-                    found_type: type_name(section_value).to_string(),
-                }
-            })?;
+            let section_array =
+                section_value
+                    .as_array()
+                    .ok_or_else(|| WrapperError::PointerTargetWrongType {
+                        pointer: section_spec.pointer.clone(),
+                        expected_type: "array".to_string(),
+                        found_type: type_name(section_value).to_string(),
+                    })?;
 
             // Extract records from section
             let mut section_records = Vec::new();
             let label_to_inject = if inject_label {
-                Some(section_spec.label.clone().unwrap_or_else(|| section_spec.name.clone()))
+                Some(
+                    section_spec
+                        .label
+                        .clone()
+                        .unwrap_or_else(|| section_spec.name.clone()),
+                )
             } else {
                 None
             };
 
             for element in section_array {
                 // Each element must be an object
-                let mut record = element.as_object().ok_or_else(|| {
-                    WrapperError::PointerTargetWrongType {
+                let mut record = element
+                    .as_object()
+                    .ok_or_else(|| WrapperError::PointerTargetWrongType {
                         pointer: format!("{}[element]", section_spec.pointer),
                         expected_type: "object".to_string(),
                         found_type: type_name(element).to_string(),
-                    }
-                })?.clone();
+                    })?
+                    .clone();
 
                 // Inject label if requested
                 if let Some(ref label) = label_to_inject {
@@ -376,13 +383,11 @@ mod tests {
         });
 
         let input_bytes = serde_json::to_vec(&input).unwrap();
-        let sections = vec![
-            SectionSpec {
-                name: "admins".to_string(),
-                pointer: "/admins".to_string(),
-                label: None,
-            },
-        ];
+        let sections = vec![SectionSpec {
+            name: "admins".to_string(),
+            pointer: "/admins".to_string(),
+            label: None,
+        }];
 
         let result = SectionsStream::new(
             input_bytes.as_slice(),

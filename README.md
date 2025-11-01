@@ -132,7 +132,7 @@ If you need to preserve the envelope:
 | Envelope > 50 MiB before target data | ⚠️ Preprocess with `jq` or `mlr` |
 | Need to preserve envelope structure | ❌ Archive original separately |
 | Multiple target arrays (e.g., users + admins) | ✅ Use `--wrapper-sections users admins` |
-| Dictionary-style objects (`{id: {...}}`) | ⏳ Wait for Phase 3 (Map mode) |
+| Dictionary-style objects (`{id: {...}}`) | ✅ Use `--wrapper-map` |
 
 ### Performance
 
@@ -199,6 +199,61 @@ jac pack data.json -o output.jac \
 - Label injection can be disabled with `--wrapper-section-no-label`
 - All sections must contain arrays of objects
 - The entire top-level object is buffered in memory; for very large envelopes (>50 MiB), consider preprocessing with `jq`
+
+### Keyed Map Objects (Dictionary-Style)
+
+Flatten object-of-objects structures where keys represent identifiers:
+
+```bash
+# Input: {"alice": {"age": 30, "role": "admin"}, "bob": {"age": 25, "role": "user"}}
+jac pack users.json -o output.jac --wrapper-map
+
+# Output records will include the map key in a "_key" field:
+# {"_key": "alice", "age": 30, "role": "admin"}
+# {"_key": "bob", "age": 25, "role": "user"}
+
+# Custom key field name
+jac pack users.json -o output.jac \
+  --wrapper-map \
+  --wrapper-map-key-field user_id
+
+# With nested pointer to the map
+jac pack api.json -o output.jac \
+  --wrapper-map \
+  --wrapper-map-pointer /data/users
+
+# Allow overwriting if key field already exists
+jac pack data.json -o output.jac \
+  --wrapper-map \
+  --wrapper-map-overwrite-key
+```
+
+**Configuration Flags:**
+- `--wrapper-map` - Enable keyed map wrapper mode
+- `--wrapper-map-pointer <PATH>` - JSON Pointer to map object (default: root)
+- `--wrapper-map-key-field <FIELD>` - Field name for injected keys (default: `_key`)
+- `--wrapper-map-overwrite-key` - Overwrite existing field if collision occurs (default: error)
+
+**Notes:**
+- The map object (or pointed-to object) must contain only object values
+- Map keys are validated against JAC's string length limit (16 MiB)
+- Keys are injected as string fields into each record
+- By default, collisions with existing fields cause an error; use `--wrapper-map-overwrite-key` to replace
+- The entire map is buffered in memory; for maps with >100K entries or large values, consider preprocessing
+- Map key order is preserved from the JSON parser (typically insertion order, but not guaranteed)
+
+**Memory Considerations:**
+
+Map mode buffers all entries before streaming. Approximate memory usage:
+- Small maps (<1K entries): negligible overhead
+- Medium maps (1K-100K entries): ~few MB to tens of MB
+- Large maps (>100K entries): may approach buffer limits
+
+For very large maps, consider external preprocessing:
+```bash
+# Alternative for large maps
+jq 'to_entries | map(.value + {_key: .key})' input.json | jac pack --ndjson -o output.jac
+```
 
 ## Architecture
 

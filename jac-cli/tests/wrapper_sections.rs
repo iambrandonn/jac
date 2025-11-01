@@ -170,7 +170,9 @@ fn sections_custom_pointer() {
 
     // Create nested structure
     let input_file = temp.path().join("nested.json");
-    fs::write(&input_file, r#"{
+    fs::write(
+        &input_file,
+        r#"{
   "data": {
     "users": [
       {"name": "alice"}
@@ -179,7 +181,9 @@ fn sections_custom_pointer() {
       {"name": "bob"}
     ]
   }
-}"#).unwrap();
+}"#,
+    )
+    .unwrap();
 
     let output = temp.path().join("output.jac");
 

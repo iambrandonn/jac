@@ -171,6 +171,54 @@ pub enum WrapperError {
         section: String,
     },
 
+    /// Map key too long
+    #[error(
+        "Map key too long: key '{key}' has length {length} bytes (max: {max_length} bytes).\n\
+         \n\
+         This limit prevents malicious inputs and aligns with JAC's max_string_len_per_value.\n\
+         If you have a legitimate use case, consider restructuring your data or preprocessing externally."
+    )]
+    MapKeyTooLong {
+        /// The key that exceeded the limit
+        key: String,
+        /// Actual length of the key (bytes)
+        length: usize,
+        /// Maximum key length allowed (bytes)
+        max_length: usize,
+    },
+
+    /// Key field collision in map mode
+    #[error(
+        "Key field collision: field '{field}' already exists in record with map key '{map_key}'.\n\
+         \n\
+         The wrapper tried to inject the map key into field '{field}', but this field\n\
+         already exists in the source record.\n\
+         \n\
+         Suggested fixes:\n\
+         1. Choose a different key field: --wrapper-map-key-field <field>\n\
+         2. Enable overwrite mode: --wrapper-map-overwrite-key"
+    )]
+    KeyFieldCollision {
+        /// Field name that collided
+        field: String,
+        /// Map key that caused the collision
+        map_key: String,
+    },
+
+    /// Map value is not an object
+    #[error(
+        "Map value not an object: key '{key}' points to {found_type}, expected object.\n\
+         \n\
+         JAC map wrappers require all values to be objects (records).\n\
+         Scalar, null, and array values cannot be processed."
+    )]
+    MapValueNotObject {
+        /// The map key with wrong value type
+        key: String,
+        /// Actual type found
+        found_type: String,
+    },
+
     /// JSON parsing error during wrapper traversal
     #[error("JSON parse error while processing wrapper: {context} - {source}")]
     JsonParse {

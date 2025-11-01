@@ -585,9 +585,22 @@ jac unpack file.jac -o debug.ndjson --ndjson
 - ✅ 9 integration tests covering CLI usage, flag validation, conflicts, and custom pointers
 - ✅ Test fixtures for sections mode (`jac-cli/tests/fixtures/wrapper/sections_basic.json`)
 
-**Upcoming Focus (Wrapper Phase 3):**
-1. Implement KeyedMap mode for flattening object-of-objects
-2. Add `--wrapper-map` CLI flags and key field configuration
-3. Test key collision handling and nested pointer maps
+**Completed in Phase 11 (Wrapper Support - Phase 3):**
+- ✅ `KeyCollisionMode` enum added to `jac-io/src/lib.rs` (Error/Overwrite modes)
+- ✅ `WrapperConfig::KeyedMap` variant with pointer, key_field, limits, and collision_mode
+- ✅ `WrapperMetrics::map_entry_count` field for tracking map entries
+- ✅ Map-specific errors: `MapKeyTooLong`, `KeyFieldCollision`, `MapValueNotObject` in `WrapperError`
+- ✅ `KeyedMapStream` iterator in `jac-io/src/wrapper/map.rs` with key injection
+- ✅ Map stream integrated into `InputSource::into_record_stream()`
+- ✅ CLI flags: `--wrapper-map`, `--wrapper-map-pointer`, `--wrapper-map-key-field`, `--wrapper-map-overwrite-key`
+- ✅ Map metrics displayed in verbose CLI output
+- ✅ 11 unit tests covering basic map flattening, nested pointers, collisions, validation, and key length limits
+- ✅ 8 integration tests covering CLI usage, flag validation, conflicts, custom key fields, and overwrite mode
+- ✅ Test fixtures for map mode (`map_basic.json`, `map_nested_pointer.json`, `map_empty.json`, `map_collision.json`)
 
-**Last Updated:** 2025-11-01 (Phase 10 – Wrapper Phase 2 complete: Multi-section array concatenation)
+**Upcoming Focus:**
+1. Performance optimization and benchmarking (if needed)
+2. Additional documentation and examples
+3. Consider additional wrapper modes based on user feedback
+
+**Last Updated:** 2025-11-01 (Phase 11 – Wrapper Phase 3 complete: Keyed map object flattening)

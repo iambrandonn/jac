@@ -23,7 +23,7 @@ use reader::BlockCursor;
 pub use reader::{
     BlockHandle, FieldIterator, JacReader, ProjectionStream, RecordStream as ReaderRecordStream,
 };
-pub use wrapper::{PointerArrayStream, SectionsStream, WrapperError};
+pub use wrapper::{KeyedMapStream, PointerArrayStream, SectionsStream, WrapperError};
 pub use writer::{JacWriter, WriterFinish, WriterMetrics};
 
 use runtime::RuntimeMeasurement;
@@ -222,6 +222,21 @@ impl Default for MissingSectionBehavior {
     }
 }
 
+/// Behavior when a key field collision occurs in map mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyCollisionMode {
+    /// Return an error (default)
+    Error,
+    /// Overwrite the existing field with the map key
+    Overwrite,
+}
+
+impl Default for KeyCollisionMode {
+    fn default() -> Self {
+        KeyCollisionMode::Error
+    }
+}
+
 /// Configuration for JSON wrapper preprocessing.
 #[derive(Debug, Clone)]
 pub enum WrapperConfig {
@@ -247,6 +262,17 @@ pub enum WrapperConfig {
         /// Behavior when a section is not found
         missing_behavior: MissingSectionBehavior,
     },
+    /// Keyed map object flattening (object-of-objects to records)
+    KeyedMap {
+        /// JSON Pointer to the map object (empty string for root)
+        pointer: String,
+        /// Field name for the injected key (default: "_key")
+        key_field: String,
+        /// Limits for this wrapper
+        limits: WrapperLimits,
+        /// Behavior when key field already exists in a record
+        collision_mode: KeyCollisionMode,
+    },
 }
 
 impl Default for WrapperConfig {
@@ -270,6 +296,8 @@ pub struct WrapperMetrics {
     pub pointer_path: Option<String>,
     /// Section-specific record counts (if applicable)
     pub section_counts: Option<Vec<(String, usize)>>,
+    /// Map entry count (if applicable)
+    pub map_entry_count: Option<usize>,
 }
 
 /// Sources that can feed records into compression.
@@ -824,6 +852,7 @@ impl InputSource {
                     processing_duration: stream.metrics().processing_duration,
                     pointer_path: Some(path.clone()),
                     section_counts: None,
+                    map_entry_count: None,
                 };
 
                 Ok(RecordStream::wrapper(Box::new(stream), metrics))
@@ -868,6 +897,54 @@ impl InputSource {
                     processing_duration: stream.metrics().processing_duration,
                     pointer_path: None,
                     section_counts: Some(stream.metrics().section_counts.clone()),
+                    map_entry_count: None,
+                };
+
+                Ok(RecordStream::wrapper(Box::new(stream), metrics))
+            }
+            WrapperConfig::KeyedMap {
+                pointer,
+                key_field,
+                limits,
+                collision_mode,
+            } => {
+                // Apply keyed map wrapper
+                use wrapper::map::KeyedMapStream;
+
+                let reader: Box<dyn Read + Send> = match self {
+                    InputSource::NdjsonPath(p) => Box::new(File::open(p)?),
+                    InputSource::JsonArrayPath(p) => Box::new(File::open(p)?),
+                    InputSource::NdjsonReader(r) => r,
+                    InputSource::JsonArrayReader(r) => r,
+                    InputSource::Iterator(_) => {
+                        return Err(JacError::Internal(
+                            "Wrapper configuration cannot be applied to Iterator input source"
+                                .to_string(),
+                        ));
+                    }
+                };
+
+                let stream = KeyedMapStream::new(
+                    reader,
+                    pointer.clone(),
+                    key_field.clone(),
+                    limits.clone(),
+                    *collision_mode,
+                )
+                .map_err(|e| JacError::Internal(format!("Wrapper error: {}", e)))?;
+
+                let metrics = WrapperMetrics {
+                    mode: "map".to_string(),
+                    buffer_peak_bytes: stream.metrics().peak_buffer_bytes,
+                    records_emitted: stream.metrics().records_emitted,
+                    processing_duration: stream.metrics().processing_duration,
+                    pointer_path: if pointer.is_empty() {
+                        None
+                    } else {
+                        Some(pointer.clone())
+                    },
+                    section_counts: None,
+                    map_entry_count: Some(stream.metrics().map_entry_count),
                 };
 
                 Ok(RecordStream::wrapper(Box::new(stream), metrics))

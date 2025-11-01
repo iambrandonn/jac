@@ -8,7 +8,7 @@
 //!
 //! - **Pointer**: Navigate to a nested array using RFC 6901 JSON Pointers
 //! - **Sections**: Concatenate multiple named arrays from a single object
-//! - **KeyedMap** (Phase 3): Flatten object-of-objects into records
+//! - **KeyedMap**: Flatten object-of-objects into records with key injection
 //!
 //! # Security & Limits
 //!
@@ -24,10 +24,12 @@
 //! If you need to preserve the original structure, archive the source file separately.
 
 pub mod error;
+pub mod map;
 pub mod pointer;
 pub mod sections;
 pub mod utils;
 
 pub use error::WrapperError;
+pub use map::KeyedMapStream;
 pub use pointer::PointerArrayStream;
 pub use sections::SectionsStream;

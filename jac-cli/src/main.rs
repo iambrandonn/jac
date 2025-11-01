@@ -195,17 +195,34 @@ enum Commands {
         )]
         wrapper_section_label_field: Option<String>,
         /// Disable section label injection
-        #[arg(
-            long = "wrapper-section-no-label",
-            requires = "wrapper_sections"
-        )]
+        #[arg(long = "wrapper-section-no-label", requires = "wrapper_sections")]
         wrapper_section_no_label: bool,
         /// Error when a section is not found (default: skip missing sections)
-        #[arg(
-            long = "wrapper-sections-missing-error",
-            requires = "wrapper_sections"
-        )]
+        #[arg(long = "wrapper-sections-missing-error", requires = "wrapper_sections")]
         wrapper_sections_missing_error: bool,
+        /// Enable keyed map wrapper (flatten object-of-objects to records)
+        #[arg(
+            long = "wrapper-map",
+            conflicts_with_all = ["wrapper_pointer", "wrapper_sections"]
+        )]
+        wrapper_map: bool,
+        /// JSON Pointer to map object (default: root, empty string)
+        #[arg(
+            long = "wrapper-map-pointer",
+            value_name = "POINTER",
+            requires = "wrapper_map"
+        )]
+        wrapper_map_pointer: Option<String>,
+        /// Field name for injected map key (default: _key)
+        #[arg(
+            long = "wrapper-map-key-field",
+            value_name = "FIELD",
+            requires = "wrapper_map"
+        )]
+        wrapper_map_key_field: Option<String>,
+        /// Overwrite existing field if key field already exists (default: error on collision)
+        #[arg(long = "wrapper-map-overwrite-key", requires = "wrapper_map")]
+        wrapper_map_overwrite_key: bool,
     },
     /// Decompress .jac to JSON/NDJSON
     Unpack {
@@ -328,6 +345,10 @@ fn main() -> Result<(), Box<dyn Error>> {
             None,   // wrapper_section_label_field
             false,  // wrapper_section_no_label
             false,  // wrapper_sections_missing_error
+            false,  // wrapper_map
+            None,   // wrapper_map_pointer
+            None,   // wrapper_map_key_field
+            false,  // wrapper_map_overwrite_key
         )?;
         return Ok(());
     }
@@ -359,6 +380,10 @@ fn main() -> Result<(), Box<dyn Error>> {
             wrapper_section_label_field,
             wrapper_section_no_label,
             wrapper_sections_missing_error,
+            wrapper_map,
+            wrapper_map_pointer,
+            wrapper_map_key_field,
+            wrapper_map_overwrite_key,
         }) => {
             handle_pack(
                 input,
@@ -385,6 +410,10 @@ fn main() -> Result<(), Box<dyn Error>> {
                 wrapper_section_label_field,
                 wrapper_section_no_label,
                 wrapper_sections_missing_error,
+                wrapper_map,
+                wrapper_map_pointer,
+                wrapper_map_key_field,
+                wrapper_map_overwrite_key,
             )?;
         }
         Some(Commands::Unpack {
@@ -461,6 +490,10 @@ fn handle_pack(
     wrapper_section_label_field: Option<String>,
     wrapper_section_no_label: bool,
     wrapper_sections_missing_error: bool,
+    wrapper_map: bool,
+    wrapper_map_pointer: Option<String>,
+    wrapper_map_key_field: Option<String>,
+    wrapper_map_overwrite_key: bool,
 ) -> Result<(), Box<dyn Error>> {
     let start = Instant::now();
     let mut limits = Limits::default();
@@ -637,6 +670,25 @@ fn handle_pack(
             label_field: wrapper_section_label_field,
             inject_label: !wrapper_section_no_label,
             missing_behavior,
+        }
+    } else if wrapper_map {
+        // Parse keyed map configuration
+        use jac_io::KeyCollisionMode;
+        let wrapper_limits = WrapperLimits::default();
+
+        let pointer = wrapper_map_pointer.unwrap_or_default(); // Default to root (empty string)
+        let key_field = wrapper_map_key_field.unwrap_or_else(|| "_key".to_string());
+        let collision_mode = if wrapper_map_overwrite_key {
+            KeyCollisionMode::Overwrite
+        } else {
+            KeyCollisionMode::Error
+        };
+
+        WrapperConfig::KeyedMap {
+            pointer,
+            key_field,
+            limits: wrapper_limits,
+            collision_mode,
         }
     } else {
         WrapperConfig::None
@@ -1001,6 +1053,9 @@ fn report_compress_summary(
             for (section_name, count) in section_counts {
                 writeln!(&mut stderr, "    {}: {}", section_name, count)?;
             }
+        }
+        if let Some(entry_count) = metrics.map_entry_count {
+            writeln!(&mut stderr, "  Map entries: {}", entry_count)?;
         }
     }
 
