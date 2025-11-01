@@ -116,6 +116,61 @@ jac pack api-response.json -o output.jac --wrapper-pointer /api/v1/results
 - `--wrapper-pointer-depth <N>` - Max traversal depth (default: 3, max: 10)
 - `--wrapper-pointer-buffer <SIZE>` - Buffer limit (default: 16M, max: 128M)
 
+### Advanced Configuration
+
+#### Environment Variables
+
+Override default wrapper settings via environment variables:
+
+```bash
+# Set default wrapper depth
+export JAC_WRAPPER_DEPTH=5
+
+# Set default buffer size
+export JAC_WRAPPER_BUFFER=32M
+
+# Enable debug logging for wrapper operations
+export JAC_DEBUG_WRAPPER=1
+
+# Custom config file location
+export JAC_CONFIG_PATH=~/my-jac-config.toml
+```
+
+#### Configuration File
+
+Create `~/.jac/config.toml` to set project-wide defaults:
+
+```toml
+[wrapper]
+default_depth = 5
+default_buffer = "32M"
+debug = false
+
+[compression]
+default_block_records = 100000
+default_zstd_level = 6
+```
+
+**Configuration Priority (highest to lowest):**
+1. CLI flags (`--wrapper-pointer-depth 7`)
+2. Environment variables (`JAC_WRAPPER_DEPTH=5`)
+3. Config file (`~/.jac/config.toml`)
+4. Built-in defaults
+
+#### Debug Logging
+
+Enable detailed wrapper preprocessing diagnostics:
+
+```bash
+JAC_DEBUG_WRAPPER=1 jac pack input.json -o output.jac --wrapper-pointer /data
+```
+
+Debug output includes:
+- Wrapper mode and configuration
+- Pointer depth and buffer limits
+- Section/map entry details
+- Actual buffer usage and processing time
+
 ### ⚠️ Important Limitations
 
 **Wrappers are preprocessing transformations.** The original envelope structure is **not preserved** in the `.jac` file. Running `jac unpack` will output flattened records only.
@@ -267,6 +322,103 @@ JAC is implemented as a Rust workspace with four main crates:
 ## Specification
 
 JAC v1 is currently in **Draft 0.9.1**. See [SPEC.md](SPEC.md) for the complete technical specification.
+
+## Wrapper FAQ
+
+### Can I recover the original envelope structure from a .jac file?
+
+**No.** Wrappers are preprocessing transformations that extract and flatten the target data before compression. The envelope structure is discarded during this process and cannot be reconstructed by `jac unpack`.
+
+**Solutions:**
+- Archive the original JSON file separately if you need to preserve the envelope
+- Use external preprocessing with `jq` or `mlr` to extract data, then compress with standard JAC
+- Document the envelope structure in your workflow/pipeline
+
+### When should I use wrappers instead of preprocessing with jq/mlr?
+
+**Use wrappers when:**
+- The envelope is <50 MiB and the target data appears early
+- You want a single-command workflow without external dependencies
+- You're processing multiple files with the same structure in a pipeline
+- The data source is consistent and trusted
+
+**Use external preprocessing when:**
+- The envelope is very large (>50 MiB) before reaching target data
+- You need to preserve the envelope structure for other purposes
+- You need complex transformations beyond array/object extraction
+- You want deterministic key ordering in map mode
+
+### What happens if I exceed the wrapper buffer limit?
+
+JAC will return a `BufferLimitExceeded` error with actionable suggestions:
+1. Increase the buffer limit: `--wrapper-pointer-buffer 64M`
+2. Preprocess externally: `jq '.data | .[]' input.json | jac pack --ndjson -o output.jac`
+3. Check that your pointer path is correct (buffering unnecessary parent data)
+
+The error message includes the actual buffered size and suggested `jq` command for preprocessing.
+
+### How do wrappers affect compression performance?
+
+Wrapper preprocessing adds serial overhead before parallel compression begins:
+- **Small envelopes** (<1 MiB): Negligible impact (10-100ms)
+- **Medium envelopes** (1-10 MiB): Minor impact (100-500ms)
+- **Large envelopes** (10-50 MiB): Noticeable but usually acceptable (0.5-2s)
+- **Very large envelopes** (>50 MiB): Consider preprocessing instead
+
+Use `--verbose-metrics` to see exact buffer usage and processing time for your data.
+
+### Can I use wrappers with Python/WASM bindings?
+
+**Not yet.** Wrapper support is currently CLI and Rust library only. Python and WASM bindings are planned for future phases based on user demand.
+
+For now, preprocess your data externally before using language bindings:
+```python
+# Python workaround
+import subprocess
+subprocess.run(['jq', '.data | .[]', 'input.json'], stdout=open('flattened.ndjson', 'w'))
+# Then use Python bindings on flattened.ndjson
+```
+
+### What's the difference between wrapper modes?
+
+| Mode | Use Case | Example Input | Key Feature |
+|------|----------|---------------|-------------|
+| **Pointer** | Single nested array/object | `{"data": [...]}` | RFC 6901 path navigation |
+| **Sections** | Multiple named arrays | `{"users": [...], "admins": [...]}` | Concatenation with labels |
+| **KeyedMap** | Dictionary-style objects | `{"alice": {...}, "bob": {...}}` | Key injection as field |
+
+### How do I debug wrapper issues?
+
+Enable debug mode to see detailed preprocessing diagnostics:
+
+```bash
+JAC_DEBUG_WRAPPER=1 jac pack input.json -o output.jac --wrapper-pointer /data
+```
+
+Debug output shows:
+- Wrapper configuration (mode, depth, buffer)
+- Pointer paths and section details
+- Actual buffer usage
+- Processing duration
+- Section/map record counts
+
+### Are there security considerations for wrappers?
+
+**Yes.** Wrappers enforce hard security limits to prevent resource exhaustion:
+- Max depth: 10 (prevents deep recursion attacks)
+- Max buffer: 128 MiB (prevents memory exhaustion)
+- Max pointer length: 2048 characters (prevents malicious strings)
+
+These limits cannot be exceeded even with CLI flags or config files. Untrusted input should still be validated before processing.
+
+### Can wrapper modes be combined?
+
+**No.** Only one wrapper mode can be active per compression request:
+- `--wrapper-pointer` conflicts with `--wrapper-sections` and `--wrapper-map`
+- `--wrapper-sections` conflicts with `--wrapper-pointer` and `--wrapper-map`
+- `--wrapper-map` conflicts with `--wrapper-pointer` and `--wrapper-sections`
+
+This is enforced by CLI argument validation. To process complex structures, use external preprocessing or multiple passes.
 
 ## Performance
 

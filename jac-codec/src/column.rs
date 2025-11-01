@@ -314,7 +314,10 @@ impl ColumnBuilder {
             }
         }
 
-        // Add object and array data to string substream (they share it)
+        // 8. Object/Array substream (shares string substream per spec §4.6)
+        // Per spec §4.6: "For present values tagged `object` or `array` (type tags 5/6),
+        // the string substream carries a minified JSON text of the subdocument."
+        // Objects and arrays are encoded as minified JSON strings and share the string substream.
         for obj_bytes in &self.objects {
             payload.extend_from_slice(&encode_uleb128(obj_bytes.len() as u64));
             payload.extend_from_slice(obj_bytes);
@@ -343,6 +346,13 @@ impl ColumnBuilder {
     }
 
     /// Build string dictionary if beneficial
+    ///
+    /// Dictionary entry ordering: Uses first-occurrence order (insertion order) for better cache
+    /// locality. This is implementation-defined per spec and may vary across encoder versions.
+    ///
+    /// Note: This is distinct from block-level field ordering, which is controlled by the
+    /// `canonicalize_keys` flag in CompressOpts and determines lexicographic vs insertion
+    /// order for field names in the block directory.
     fn build_string_dictionary(&self) -> Result<DictionaryBuild> {
         if self.strings.is_empty() {
             return Ok((None, false));
@@ -369,8 +379,8 @@ impl ColumnBuilder {
             return Ok((None, false));
         }
 
-        // Per SPEC §4 dictionary encoding uses threshold max(2, total_strings / 4)
-        let threshold = min(dict_limit, max(2, self.strings.len() / 4));
+        // Per SPEC §4.6 and Addendum §2.2: dictionary encoding when distinct <= min(max_dict_entries, present_count / 8)
+        let threshold = min(dict_limit, max(2, self.strings.len() / 8));
 
         if distinct_count <= threshold {
             Ok((Some((dict_entries, dict_map)), true))
@@ -380,11 +390,25 @@ impl ColumnBuilder {
     }
 
     /// Check if delta encoding is beneficial for integers
+    ///
+    /// Delta encoding heuristic:
+    /// 1. Requires strictly monotonic increasing sequence (every value > previous)
+    /// 2. Uses delta_uniformity metric: (max_delta - min_delta) / total_range < 0.5
+    ///
+    /// This differs from PLAN.md's suggested "increasing_ratio >= 0.95" approach.
+    /// The delta_uniformity metric is more conservative and better suited for compression
+    /// as it checks whether deltas are relatively uniform (low variance), not just whether
+    /// the sequence is mostly increasing. Strictly monotonic check (line 399) already
+    /// ensures 100% increasing ratio, so the uniformity check provides additional value.
+    ///
+    /// Rationale: Delta encoding is most effective when deltas are small and uniform
+    /// (e.g., sequential IDs, timestamps). High delta variance reduces compression benefit.
     fn should_use_delta_encoding(&self, ints: &[i64]) -> bool {
         if ints.len() < 2 {
             return false;
         }
 
+        // Require strict monotonicity (strictly increasing sequence)
         for i in 1..ints.len() {
             if ints[i] <= ints[i - 1] {
                 return false;
@@ -406,9 +430,10 @@ impl ColumnBuilder {
             return false;
         }
 
+        // Check delta uniformity (low variance in delta magnitudes)
         let delta_span = (max_delta as i128) - (min_delta as i128);
-        let delta_ratio = delta_span as f64 / range as f64;
-        delta_ratio < 0.5
+        let delta_uniformity = delta_span as f64 / range as f64;
+        delta_uniformity < 0.5
     }
 
     fn ensure_string_len(&self, len: usize) -> Result<()> {
@@ -432,11 +457,37 @@ impl ColumnBuilder {
         self.ensure_decimal_limit(&decimal)?;
 
         if self.canonicalize_numbers {
-            self.trim_decimal_trailing_zeros(&mut decimal);
-            self.ensure_decimal_limit(&decimal)?;
+            self.canonicalize_decimal(&mut decimal)?;
         }
 
         Ok(decimal)
+    }
+
+    /// Canonicalize decimal per FLAG_CANONICALIZE_NUMBERS requirements:
+    /// 1. Trim trailing zeros in mantissa
+    /// 2. Use scientific notation for |exponent| > 6 (normalize to single digit before decimal point)
+    fn canonicalize_decimal(&self, decimal: &mut Decimal) -> Result<()> {
+        // First, trim trailing zeros
+        self.trim_decimal_trailing_zeros(decimal);
+        self.ensure_decimal_limit(decimal)?;
+
+        // Apply scientific notation normalization if |exponent| > 6
+        // This moves digits to achieve a single significant digit before the decimal point
+        if decimal.exponent.abs() > 6 && !decimal.digits.is_empty() {
+            // Normalize to scientific form: single digit before decimal
+            // Example: 12345 with exp=0 → digits="12345" becomes digits="1" with exp adjusted
+            let digit_count = decimal.digits.len() as i32;
+            if digit_count > 1 {
+                // Adjust exponent to account for moving decimal point
+                // digits="12345" exp=0 → digits="1.2345" exp=4 (scientific form)
+                decimal.exponent = decimal.exponent.saturating_add(digit_count - 1);
+                // Keep only first digit for normalized form
+                decimal.digits.truncate(1);
+            }
+        }
+
+        self.ensure_decimal_limit(decimal)?;
+        Ok(())
     }
 
     fn ensure_decimal_limit(&self, decimal: &Decimal) -> Result<()> {
@@ -695,7 +746,8 @@ mod tests {
         let mut builder = ColumnBuilder::new(8, &opts);
 
         // Add repeated strings to trigger dictionary encoding
-        // With 8 strings and 2 distinct values, threshold = min(4096, 8/8) = 1
+        // With 8 strings and 2 distinct values, threshold = min(4096, max(2, 8/8)) = 2
+        // distinct_count (2) <= threshold (2), so dictionary should be used
         builder.add_value(0, &json!("hello")).unwrap();
         builder.add_value(1, &json!("world")).unwrap();
         builder.add_value(2, &json!("hello")).unwrap();
@@ -777,6 +829,30 @@ mod tests {
     }
 
     #[test]
+    fn test_column_builder_canonicalizes_scientific_notation() {
+        let mut opts = CompressOpts::default();
+        opts.canonicalize_numbers = true;
+        let mut builder = ColumnBuilder::new(1, &opts);
+
+        // Test large exponent triggers scientific notation (|exponent| > 6)
+        let number: Number = "10000000.0".parse().unwrap(); // 1e7
+        builder
+            .add_value(0, &serde_json::Value::Number(number))
+            .unwrap();
+
+        let segment = builder.finalize(&opts, 1).unwrap();
+        let presence_len = (1 + 7) >> 3;
+        let tag_len = ((3 * segment.value_count_present) + 7) >> 3;
+        let start = presence_len + tag_len;
+        let (decimal, consumed) = Decimal::decode(&segment.uncompressed_payload[start..]).unwrap();
+        assert!(consumed > 0);
+        // Should be normalized to scientific form: 1e7
+        assert_eq!(decimal.digits, b"1");
+        assert_eq!(decimal.exponent, 7);
+        assert_eq!(decimal.to_json_string(), "1e7");
+    }
+
+    #[test]
     fn test_column_builder_string_length_limit_enforced() {
         let mut opts = CompressOpts::default();
         opts.limits.max_string_len_per_value = 4;
@@ -810,6 +886,43 @@ mod tests {
 
         let segment = builder.finalize(&opts, 9).unwrap();
         assert_eq!(segment.encoding_flags & 1, 0);
+    }
+
+    #[test]
+    fn test_column_builder_dictionary_limit_respected_in_heuristic() {
+        let mut opts = CompressOpts::default();
+        opts.limits.max_dict_entries_per_field = 2;
+        opts.max_dict_entries = 2;
+        let mut builder = ColumnBuilder::new(20, &opts);
+
+        // Add 16 strings with 2 distinct values
+        // threshold = min(2, max(2, 16/8)) = min(2, 2) = 2
+        // distinct_count = 2 <= threshold = 2, so dict should be used
+        let vals = vec!["a", "b", "a", "b", "a", "b", "a", "b",
+                        "a", "b", "a", "b", "a", "b", "a", "b"];
+        for (i, val) in vals.iter().enumerate() {
+            builder.add_value(i, &json!(val)).unwrap();
+        }
+
+        let segment = builder.finalize(&opts, 16).unwrap();
+        // Dictionary should be used (2 entries, within limit)
+        assert_eq!(segment.encoding_flags & 1, 1, "Dictionary should be used");
+        assert_eq!(segment.dict_entry_count, 2);
+
+        // Now test that 3 distinct values prevents dictionary usage
+        let mut builder2 = ColumnBuilder::new(20, &opts);
+        for i in 0..16 {
+            let val = match i % 3 {
+                0 => "a",
+                1 => "b",
+                _ => "c",
+            };
+            builder2.add_value(i, &json!(val)).unwrap();
+        }
+
+        let segment2 = builder2.finalize(&opts, 16).unwrap();
+        // With 3 distinct and threshold 2, dict should NOT be used (distinct > threshold)
+        assert_eq!(segment2.encoding_flags & 1, 0, "Dictionary should not be used when distinct > threshold");
     }
 
     #[test]

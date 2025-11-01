@@ -89,14 +89,16 @@ Each crate only depends on layers below it. `jac-format` has zero I/O dependenci
 - Ensures semantic equality on round-trip (not byte-identical formatting)
 
 ### 5. **Dictionary Encoding Heuristics**
-- Dictionary encoding is used when: `distinct_count <= min(max_dict_entries, max(2, total_strings / 4))`
+- Dictionary encoding is used when: `distinct_count <= min(max_dict_entries, max(2, total_strings / 8))`
+- Per SPEC §4.6 and Addendum §2.2: threshold uses division by 8, not 4
 - This balances compression ratio with memory usage
-- Dictionary entries are stored in first-occurrence order for better locality
+- Dictionary entries are stored in first-occurrence order (implementation-defined, may vary)
 
 ### 6. **Delta Encoding for Integers**
 - Delta encoding is used for monotonic integer sequences (timestamps, IDs)
-- Applied when: sequence is strictly increasing and `delta_ratio < 0.5`
-- Delta ratio = `(max_delta - min_delta) / (max_value - min_value)`
+- Applied when: sequence is strictly increasing and `delta_uniformity < 0.5`
+- Delta uniformity = `(max_delta - min_delta) / (max_value - min_value)`
+- This metric checks for uniform deltas (low variance), which is optimal for compression
 - Stores first value as-is, then deltas (varint-encoded)
 
 ### 7. **Block-Based Structure**
@@ -598,9 +600,37 @@ jac unpack file.jac -o debug.ndjson --ndjson
 - ✅ 8 integration tests covering CLI usage, flag validation, conflicts, custom key fields, and overwrite mode
 - ✅ Test fixtures for map mode (`map_basic.json`, `map_nested_pointer.json`, `map_empty.json`, `map_collision.json`)
 
+**Completed in Phase 12 (Wrapper Support - Phase 4: Polish & Observability):**
+- ✅ Environment variable support for wrapper configuration (`JAC_WRAPPER_DEPTH`, `JAC_WRAPPER_BUFFER`, `JAC_DEBUG_WRAPPER`)
+- ✅ Configuration file support (`~/.jac/config.toml`) with wrapper and compression defaults
+- ✅ Configuration priority system: CLI flags > environment variables > config file > built-in defaults
+- ✅ Debug logging hooks gated by `JAC_DEBUG_WRAPPER` environment variable or config file
+- ✅ Comprehensive debug output showing wrapper mode, configuration, buffer usage, and processing metrics
+- ✅ TOML dependency added (`toml = "0.5"`) for config file parsing
+- ✅ README updated with advanced configuration section covering environment variables, config files, and debug logging
+- ✅ Comprehensive Wrapper FAQ section added to README with 9 detailed Q&A entries covering:
+  - Envelope structure recovery (not possible)
+  - Wrapper vs preprocessing decision guidance
+  - Buffer limit error handling
+  - Performance characteristics
+  - Language binding support status
+  - Mode comparison table
+  - Debug workflow
+  - Security considerations
+  - Mode combination restrictions
+- ✅ All 373 tests passing (across all crates)
+- ✅ No regressions introduced by Phase 4 changes
+
+**Phase 4 Feedback Integration (Post-Review Improvements):**
+- ✅ Compression config fields (`default_block_records`, `default_zstd_level`) now properly applied from config file
+- ✅ Config file parse errors surfaced to users with clear warnings and remediation guidance
+- ✅ Config file example added to repository (`config.toml.example`) with comprehensive documentation
+- ✅ Wrapper metrics display improved: condensed summary shown always, detailed metrics only with `--verbose-metrics`
+- ✅ All tests still passing (373 tests) with no regressions from improvements
+
 **Upcoming Focus:**
 1. Performance optimization and benchmarking (if needed)
-2. Additional documentation and examples
-3. Consider additional wrapper modes based on user feedback
+2. Consider optional auto-detect flag for wrapper mode suggestion (Phase 5+)
+3. Evaluate wrapper support for Python/WASM bindings based on user demand
 
-**Last Updated:** 2025-11-01 (Phase 11 – Wrapper Phase 3 complete: Keyed map object flattening)
+**Last Updated:** 2025-11-01 (Phase 12 – Wrapper Phase 4 complete: Polish, metrics, and extensibility)

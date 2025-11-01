@@ -14,6 +14,7 @@ use jac_io::{
     DecompressOptions, DecompressOpts, DecompressRequest, DecompressSummary, InputSource, JacInput,
     JacReader, Limits, OutputSink,
 };
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::error::Error;
@@ -89,6 +90,62 @@ fn compute_recommended_block_size(
     let recommended = (records as f64 * ratio * 0.9).ceil() as usize;
 
     recommended.max(1000) // Minimum 1000 records
+}
+
+/// Configuration file structure
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct JacConfig {
+    #[serde(default)]
+    wrapper: WrapperConfigFile,
+    #[serde(default)]
+    compression: CompressionConfigFile,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct WrapperConfigFile {
+    /// Default max depth for wrapper pointers
+    default_depth: Option<usize>,
+    /// Default buffer size for wrapper preprocessing
+    default_buffer: Option<String>,
+    /// Enable debug logging by default
+    debug: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct CompressionConfigFile {
+    /// Default block records
+    default_block_records: Option<usize>,
+    /// Default zstd level
+    default_zstd_level: Option<u8>,
+}
+
+fn load_config() -> Result<JacConfig, Box<dyn Error>> {
+    let config_path = if let Ok(path) = std::env::var("JAC_CONFIG_PATH") {
+        PathBuf::from(path)
+    } else if let Some(home) = dirs::home_dir() {
+        home.join(".jac").join("config.toml")
+    } else {
+        return Ok(JacConfig::default());
+    };
+
+    if !config_path.exists() {
+        return Ok(JacConfig::default());
+    }
+
+    let content = std::fs::read_to_string(&config_path)?;
+    let config: JacConfig = toml::from_str(&content)?;
+    Ok(config)
+}
+
+// dirs crate placeholder - add to Cargo.toml or implement inline
+mod dirs {
+    use std::path::PathBuf;
+
+    pub fn home_dir() -> Option<PathBuf> {
+        std::env::var_os("HOME")
+            .or_else(|| std::env::var_os("USERPROFILE"))
+            .map(PathBuf::from)
+    }
 }
 
 #[derive(Parser)]
@@ -468,8 +525,8 @@ fn main() -> Result<(), Box<dyn Error>> {
 fn handle_pack(
     input: PathBuf,
     output: PathBuf,
-    block_records: usize,
-    zstd_level: u8,
+    mut block_records: usize,
+    mut zstd_level: u8,
     canonicalize_keys: bool,
     canonicalize_numbers: bool,
     max_dict_entries: usize,
@@ -496,6 +553,34 @@ fn handle_pack(
     wrapper_map_overwrite_key: bool,
 ) -> Result<(), Box<dyn Error>> {
     let start = Instant::now();
+
+    // Load configuration file early so we can apply defaults
+    let config = match load_config() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Warning: Failed to load config file: {}", e);
+            eprintln!("Using built-in defaults. Check ~/.jac/config.toml syntax.");
+            JacConfig::default()
+        }
+    };
+
+    // Apply compression config defaults if values weren't explicitly set
+    // Note: CLI uses clap defaults, so we need to check if user actually provided them
+    // For now, we'll apply config values if they differ from current defaults
+    if let Some(config_block_records) = config.compression.default_block_records {
+        // Only apply if we're using the standard default (100000)
+        if block_records == 100_000 {
+            block_records = config_block_records;
+        }
+    }
+
+    if let Some(config_zstd_level) = config.compression.default_zstd_level {
+        // Only apply if we're using the standard default (6)
+        if zstd_level == 6 {
+            zstd_level = config_zstd_level;
+        }
+    }
+
     let mut limits = Limits::default();
     if let Some(bytes) = max_segment_bytes {
         if bytes == 0 {
@@ -578,8 +663,59 @@ fn handle_pack(
     // Parse wrapper configuration if provided
     use jac_io::{MissingSectionBehavior, SectionSpec, WrapperConfig, WrapperLimits};
 
+    // Config file already loaded earlier; check for environment variable overrides and config file settings
+    let debug_wrapper = std::env::var("JAC_DEBUG_WRAPPER")
+        .ok()
+        .and_then(|v| v.parse::<bool>().ok().or(Some(true)))
+        .or(config.wrapper.debug)
+        .unwrap_or(false);
+
+    if debug_wrapper {
+        eprintln!("🔍 JAC_DEBUG_WRAPPER enabled");
+    }
+
     let wrapper_config = if let Some(pointer) = wrapper_pointer {
         let mut wrapper_limits = WrapperLimits::default();
+
+        // Apply config file defaults first
+        if let Some(depth) = config.wrapper.default_depth {
+            wrapper_limits.max_depth = depth;
+            if debug_wrapper {
+                eprintln!("🔍 Using config file default_depth={}", depth);
+            }
+        }
+
+        if let Some(ref buffer_str) = config.wrapper.default_buffer {
+            if let Ok(buffer_bytes) = parse_size(buffer_str) {
+                wrapper_limits.max_buffer_bytes = buffer_bytes;
+                if debug_wrapper {
+                    eprintln!("🔍 Using config file default_buffer={}", buffer_str);
+                }
+            }
+        }
+
+        // Apply environment variable overrides (higher priority than config file)
+        if wrapper_pointer_depth.is_none() {
+            if let Ok(env_depth) = std::env::var("JAC_WRAPPER_DEPTH") {
+                if let Ok(depth) = env_depth.parse::<usize>() {
+                    if debug_wrapper {
+                        eprintln!("🔍 Using JAC_WRAPPER_DEPTH={}", depth);
+                    }
+                    wrapper_limits.max_depth = depth;
+                }
+            }
+        }
+
+        if wrapper_pointer_buffer.is_none() {
+            if let Ok(env_buffer) = std::env::var("JAC_WRAPPER_BUFFER") {
+                if let Ok(buffer_bytes) = parse_size(&env_buffer) {
+                    if debug_wrapper {
+                        eprintln!("🔍 Using JAC_WRAPPER_BUFFER={}", env_buffer);
+                    }
+                    wrapper_limits.max_buffer_bytes = buffer_bytes;
+                }
+            }
+        }
 
         // Parse depth override
         if let Some(depth) = wrapper_pointer_depth {
@@ -613,6 +749,17 @@ fn handle_pack(
                 .into());
             }
             wrapper_limits.max_buffer_bytes = buffer_bytes;
+        }
+
+        if debug_wrapper {
+            eprintln!("🔍 Wrapper config: Pointer mode");
+            eprintln!("  - Path: {}", pointer);
+            eprintln!("  - Max depth: {}", wrapper_limits.max_depth);
+            eprintln!(
+                "  - Max buffer: {} bytes ({:.2} MiB)",
+                wrapper_limits.max_buffer_bytes,
+                wrapper_limits.max_buffer_bytes as f64 / (1024.0 * 1024.0)
+            );
         }
 
         WrapperConfig::Pointer {
@@ -664,6 +811,17 @@ fn handle_pack(
             MissingSectionBehavior::Skip
         };
 
+        if debug_wrapper {
+            eprintln!("🔍 Wrapper config: Sections mode");
+            eprintln!("  - Sections: {}", sections.len());
+            for sec in &sections {
+                eprintln!("    - {} -> {}", sec.name, sec.pointer);
+            }
+            eprintln!("  - Label field: {:?}", wrapper_section_label_field);
+            eprintln!("  - Inject label: {}", !wrapper_section_no_label);
+            eprintln!("  - Missing behavior: {:?}", missing_behavior);
+        }
+
         WrapperConfig::Sections {
             entries: sections,
             limits: wrapper_limits,
@@ -684,6 +842,13 @@ fn handle_pack(
             KeyCollisionMode::Error
         };
 
+        if debug_wrapper {
+            eprintln!("🔍 Wrapper config: KeyedMap mode");
+            eprintln!("  - Pointer: {}", if pointer.is_empty() { "/" } else { &pointer });
+            eprintln!("  - Key field: {}", key_field);
+            eprintln!("  - Collision mode: {:?}", collision_mode);
+        }
+
         WrapperConfig::KeyedMap {
             pointer,
             key_field,
@@ -691,6 +856,9 @@ fn handle_pack(
             collision_mode,
         }
     } else {
+        if debug_wrapper {
+            eprintln!("🔍 Wrapper config: None (standard mode)");
+        }
         WrapperConfig::None
     };
 
@@ -1020,42 +1188,45 @@ fn report_compress_summary(
     // Display wrapper metrics if preprocessing was used
     if let Some(metrics) = &summary.wrapper_metrics {
         writeln!(&mut stderr)?;
+
+        // Always show condensed wrapper metrics (mode and buffer usage)
+        let buffer_mib = metrics.buffer_peak_bytes as f64 / (1024.0 * 1024.0);
         writeln!(
             &mut stderr,
-            "Wrapper preprocessing (mode: {}):",
-            metrics.mode
-        )?;
-        writeln!(
-            &mut stderr,
-            "  Buffer peak: {:.2} MiB",
-            metrics.buffer_peak_bytes as f64 / (1024.0 * 1024.0)
+            "Wrapper: {} mode, buffered {:.2} MiB",
+            metrics.mode,
+            buffer_mib
         )?;
 
-        // Calculate total from section_counts instead of using records_emitted
-        // (which is captured before stream iteration and always shows 0)
-        let total_records = if let Some(ref section_counts) = metrics.section_counts {
-            section_counts.iter().map(|(_, count)| count).sum::<usize>()
-        } else {
-            metrics.records_emitted
-        };
-        writeln!(&mut stderr, "  Records emitted: {}", total_records)?;
+        // Show detailed metrics only with verbose flag
+        if verbose_metrics {
+            writeln!(
+                &mut stderr,
+                "  Processing time: {:?}",
+                metrics.processing_duration
+            )?;
 
-        writeln!(
-            &mut stderr,
-            "  Processing time: {:?}",
-            metrics.processing_duration
-        )?;
-        if let Some(path) = &metrics.pointer_path {
-            writeln!(&mut stderr, "  Pointer path: {}", path)?;
-        }
-        if let Some(section_counts) = &metrics.section_counts {
-            writeln!(&mut stderr, "  Section record counts:")?;
-            for (section_name, count) in section_counts {
-                writeln!(&mut stderr, "    {}: {}", section_name, count)?;
+            // Calculate total from section_counts instead of using records_emitted
+            // (which is captured before stream iteration and always shows 0)
+            let total_records = if let Some(ref section_counts) = metrics.section_counts {
+                section_counts.iter().map(|(_, count)| count).sum::<usize>()
+            } else {
+                metrics.records_emitted
+            };
+            writeln!(&mut stderr, "  Records emitted: {}", total_records)?;
+
+            if let Some(path) = &metrics.pointer_path {
+                writeln!(&mut stderr, "  Pointer path: {}", path)?;
             }
-        }
-        if let Some(entry_count) = metrics.map_entry_count {
-            writeln!(&mut stderr, "  Map entries: {}", entry_count)?;
+            if let Some(section_counts) = &metrics.section_counts {
+                writeln!(&mut stderr, "  Section record counts:")?;
+                for (section_name, count) in section_counts {
+                    writeln!(&mut stderr, "    {}: {}", section_name, count)?;
+                }
+            }
+            if let Some(entry_count) = metrics.map_entry_count {
+                writeln!(&mut stderr, "  Map entries: {}", entry_count)?;
+            }
         }
     }
 
@@ -2097,6 +2268,10 @@ mod tests {
             None,  // wrapper_section_label_field
             false, // wrapper_section_no_label
             false, // wrapper_sections_missing_error
+            false, // wrapper_map
+            None,  // wrapper_map_pointer
+            None,  // wrapper_map_key_field
+            false, // wrapper_map_overwrite_key
         )
         .unwrap();
 
@@ -2145,6 +2320,10 @@ mod tests {
             None,  // wrapper_section_label_field
             false, // wrapper_section_no_label
             false, // wrapper_sections_missing_error
+            false, // wrapper_map
+            None,  // wrapper_map_pointer
+            None,  // wrapper_map_key_field
+            false, // wrapper_map_overwrite_key
         )
         .unwrap();
 
@@ -2321,6 +2500,10 @@ mod tests {
             None,   // wrapper_section_label_field
             false,  // wrapper_section_no_label
             false,  // wrapper_sections_missing_error
+            false,  // wrapper_map
+            None,   // wrapper_map_pointer
+            None,   // wrapper_map_key_field
+            false,  // wrapper_map_overwrite_key
         )
         .unwrap();
 
@@ -2370,6 +2553,10 @@ mod tests {
             None,  // wrapper_section_label_field
             false, // wrapper_section_no_label
             false, // wrapper_sections_missing_error
+            false, // wrapper_map
+            None,  // wrapper_map_pointer
+            None,  // wrapper_map_key_field
+            false, // wrapper_map_overwrite_key
         )
         .unwrap();
 

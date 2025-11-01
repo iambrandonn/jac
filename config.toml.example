@@ -1,0 +1,70 @@
+# JAC Configuration File Example
+# Copy this file to ~/.jac/config.toml to use custom defaults
+# Or set JAC_CONFIG_PATH environment variable to use a different location
+
+[wrapper]
+# Maximum depth for JSON pointer traversal (default: 3, max: 10)
+# Increase this if you have deeply nested envelopes
+# default_depth = 5
+
+# Buffer size limit for wrapper preprocessing (default: "16M", max: "128M")
+# Accepts size suffixes: K/M/G (e.g., "32M", "1G")
+# Increase if you have large envelopes before target data
+# default_buffer = "32M"
+
+# Enable debug logging for all wrapper operations (default: false)
+# When enabled, prints wrapper mode, configuration, and buffer usage to stderr
+# Can also be controlled via JAC_DEBUG_WRAPPER environment variable
+# debug = false
+
+[compression]
+# Default records per block (default: 100000)
+# Higher values improve compression but increase memory usage
+# Lower values improve seekability and reduce memory footprint
+# default_block_records = 100000
+
+# Default Zstandard compression level (default: 6, range: 1-22)
+# Higher levels provide better compression at the cost of slower encoding
+# Levels 15+ are optimized for archival workloads (very slow, best compression)
+# default_zstd_level = 6
+
+# Configuration Priority
+# ======================
+# Settings are applied in this order (later overrides earlier):
+# 1. Built-in defaults (hardcoded in JAC)
+# 2. This config file (~/.jac/config.toml)
+# 3. Environment variables (JAC_WRAPPER_DEPTH, JAC_WRAPPER_BUFFER, JAC_DEBUG_WRAPPER)
+# 4. CLI flags (--wrapper-pointer-depth, --wrapper-pointer-buffer, --block-records, etc.)
+#
+# This means CLI flags always take precedence over config file settings.
+
+# Example Configurations
+# ======================
+
+# Example 1: Optimized for large API responses with deep nesting
+# [wrapper]
+# default_depth = 8
+# default_buffer = "64M"
+# debug = true
+#
+# [compression]
+# default_block_records = 50000
+# default_zstd_level = 9
+
+# Example 2: Fast compression for development/testing
+# [compression]
+# default_block_records = 100000
+# default_zstd_level = 3
+
+# Example 3: Maximum compression for archival
+# [compression]
+# default_block_records = 200000
+# default_zstd_level = 19
+
+# Security Considerations
+# =======================
+# Be cautious when increasing wrapper buffer limits:
+# - Large buffers increase memory usage (peak = buffer + compression memory)
+# - Malicious inputs could cause memory exhaustion
+# - Hard maximums (depth: 10, buffer: 128M) are enforced regardless of config
+# - Only process trusted data with elevated limits
