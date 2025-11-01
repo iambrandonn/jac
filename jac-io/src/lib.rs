@@ -23,7 +23,10 @@ use reader::BlockCursor;
 pub use reader::{
     BlockHandle, FieldIterator, JacReader, ProjectionStream, RecordStream as ReaderRecordStream,
 };
-pub use wrapper::{KeyedMapStream, PointerArrayStream, SectionsStream, WrapperError};
+pub use wrapper::{
+    ArrayHeadersStream, FieldHint, FieldType, KeyedMapStream, PointerArrayStream, SchemaHints,
+    SectionsStream, WrapperError, WrapperPlugin, WrapperPluginMetadata, WrapperPluginRegistry,
+};
 pub use writer::{JacWriter, WriterFinish, WriterMetrics};
 
 use runtime::RuntimeMeasurement;
@@ -273,6 +276,20 @@ pub enum WrapperConfig {
         /// Behavior when key field already exists in a record
         collision_mode: KeyCollisionMode,
     },
+    /// Array-with-headers wrapper (CSV-like format)
+    ArrayWithHeaders {
+        /// Limits for this wrapper
+        limits: WrapperLimits,
+    },
+    /// Custom plugin-based wrapper
+    Plugin {
+        /// Name of the registered plugin to use
+        plugin_name: String,
+        /// Plugin-specific configuration (JSON value)
+        config: Value,
+        /// Limits for this wrapper
+        limits: WrapperLimits,
+    },
 }
 
 impl Default for WrapperConfig {
@@ -298,6 +315,10 @@ pub struct WrapperMetrics {
     pub section_counts: Option<Vec<(String, usize)>>,
     /// Map entry count (if applicable)
     pub map_entry_count: Option<usize>,
+    /// Header field count for array-with-headers mode (if applicable)
+    pub header_field_count: Option<usize>,
+    /// Plugin name (if applicable)
+    pub plugin_name: Option<String>,
 }
 
 /// Sources that can feed records into compression.
@@ -853,6 +874,8 @@ impl InputSource {
                     pointer_path: Some(path.clone()),
                     section_counts: None,
                     map_entry_count: None,
+                    header_field_count: None,
+                    plugin_name: None,
                 };
 
                 Ok(RecordStream::wrapper(Box::new(stream), metrics))
@@ -898,6 +921,8 @@ impl InputSource {
                     pointer_path: None,
                     section_counts: Some(stream.metrics().section_counts.clone()),
                     map_entry_count: None,
+                    header_field_count: None,
+                    plugin_name: None,
                 };
 
                 Ok(RecordStream::wrapper(Box::new(stream), metrics))
@@ -945,9 +970,98 @@ impl InputSource {
                     },
                     section_counts: None,
                     map_entry_count: Some(stream.metrics().map_entry_count),
+                    header_field_count: None,
+                    plugin_name: None,
                 };
 
                 Ok(RecordStream::wrapper(Box::new(stream), metrics))
+            }
+            WrapperConfig::ArrayWithHeaders { limits } => {
+                // Apply array-with-headers wrapper
+                use wrapper::array_headers::ArrayHeadersStream;
+
+                let reader: Box<dyn Read + Send> = match self {
+                    InputSource::NdjsonPath(p) => Box::new(File::open(p)?),
+                    InputSource::JsonArrayPath(p) => Box::new(File::open(p)?),
+                    InputSource::NdjsonReader(r) => r,
+                    InputSource::JsonArrayReader(r) => r,
+                    InputSource::Iterator(_) => {
+                        return Err(JacError::Internal(
+                            "Wrapper configuration cannot be applied to Iterator input source"
+                                .to_string(),
+                        ));
+                    }
+                };
+
+                let stream = ArrayHeadersStream::new(reader, limits.clone())
+                    .map_err(|e| JacError::Internal(format!("Wrapper error: {}", e)))?;
+
+                let metrics = WrapperMetrics {
+                    mode: "array-with-headers".to_string(),
+                    buffer_peak_bytes: stream.metrics().peak_buffer_bytes,
+                    records_emitted: stream.metrics().records_emitted,
+                    processing_duration: stream.metrics().processing_duration,
+                    pointer_path: None,
+                    section_counts: None,
+                    map_entry_count: None,
+                    header_field_count: Some(stream.metrics().header_field_count),
+                    plugin_name: None,
+                };
+
+                Ok(RecordStream::wrapper(Box::new(stream), metrics))
+            }
+            WrapperConfig::Plugin {
+                plugin_name,
+                config,
+                limits,
+            } => {
+                // Apply plugin wrapper
+                use wrapper::plugin::WrapperPluginRegistry;
+
+                let reader: Box<dyn Read + Send> = match self {
+                    InputSource::NdjsonPath(p) => Box::new(File::open(p)?),
+                    InputSource::JsonArrayPath(p) => Box::new(File::open(p)?),
+                    InputSource::NdjsonReader(r) => r,
+                    InputSource::JsonArrayReader(r) => r,
+                    InputSource::Iterator(_) => {
+                        return Err(JacError::Internal(
+                            "Wrapper configuration cannot be applied to Iterator input source"
+                                .to_string(),
+                        ));
+                    }
+                };
+
+                let registry = WrapperPluginRegistry::global();
+                let plugin = registry.get(plugin_name).ok_or_else(|| {
+                    JacError::Internal(format!("Plugin '{}' not found", plugin_name))
+                })?;
+
+                // Validate configuration
+                plugin
+                    .validate_config(config)
+                    .map_err(|e| JacError::Internal(format!("Wrapper error: {}", e)))?;
+
+                // Process with plugin
+                let start = std::time::Instant::now();
+                let iterator = plugin
+                    .process(reader, config, limits)
+                    .map_err(|e| JacError::Internal(format!("Wrapper error: {}", e)))?;
+
+                let processing_duration = start.elapsed();
+
+                let metrics = WrapperMetrics {
+                    mode: "plugin".to_string(),
+                    buffer_peak_bytes: 0, // Plugins must track their own buffer usage
+                    records_emitted: 0,   // Will be updated during iteration
+                    processing_duration,
+                    pointer_path: None,
+                    section_counts: None,
+                    map_entry_count: None,
+                    header_field_count: None,
+                    plugin_name: Some(plugin_name.clone()),
+                };
+
+                Ok(RecordStream::wrapper(iterator, metrics))
             }
         }
     }

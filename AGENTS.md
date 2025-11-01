@@ -206,13 +206,19 @@ tag_bytes = ((3 * present_count) + 7) >> 3
 
 3. **Phase Status**
    - Phase 1 (✅): Pointer mode - RFC 6901 JSON Pointer extraction
-   - Phase 2 (⏳): Sections mode - Multi-array concatenation
-   - Phase 3 (⏳): KeyedMap mode - Flatten object-of-objects
+   - Phase 2 (✅): Sections mode - Multi-array concatenation
+   - Phase 3 (✅): KeyedMap mode - Flatten object-of-objects
+   - Phase 4 (✅): Polish, metrics, and extensibility
+   - Phase 5 (✅): Plugin system, array-with-headers, schema hints
 
 **Module Structure (`jac-io/src/wrapper/`):**
 - `mod.rs` - Public exports and module docs
 - `error.rs` - `WrapperError` with actionable remediation suggestions
 - `pointer.rs` - `PointerArrayStream` implementing RFC 6901 extraction
+- `sections.rs` - `SectionsStream` for multi-array concatenation
+- `map.rs` - `KeyedMapStream` for object-of-objects flattening
+- `array_headers.rs` - `ArrayHeadersStream` for CSV-like array conversion
+- `plugin.rs` - `WrapperPlugin` trait and registry system
 - `utils.rs` - Shared utilities (pointer parsing, navigation, validation)
 
 **Adding a New Wrapper Mode (Future):**
@@ -628,9 +634,24 @@ jac unpack file.jac -o debug.ndjson --ndjson
 - ✅ Wrapper metrics display improved: condensed summary shown always, detailed metrics only with `--verbose-metrics`
 - ✅ All tests still passing (373 tests) with no regressions from improvements
 
+**Completed in Wrapper Phase 5 (Deferred Features Implementation):**
+- ✅ `WrapperPlugin` trait for custom wrapper implementations
+- ✅ `WrapperPluginRegistry` with global singleton and dynamic registration
+- ✅ `ArrayWithHeaders` wrapper mode for CSV-like JSON arrays
+- ✅ Schema hints API (`SchemaHints`, `FieldHint`, `FieldType`) for encoder optimization
+- ✅ Plugin-based wrapper integration with `WrapperConfig::Plugin` variant
+- ✅ Array-with-headers integration with `WrapperConfig::ArrayWithHeaders` variant
+- ✅ Extended `WrapperMetrics` with `header_field_count` and `plugin_name` fields
+- ✅ Extended `WrapperError` with plugin and array-headers specific errors
+- ✅ Comprehensive documentation in README (plugin API, schema hints, use cases)
+- ✅ Full test coverage: 83 tests passing (wrapper module + integration)
+- ✅ `ArrayHeadersStream` with header validation and length mismatch detection
+- ✅ Plugin validation hooks (`validate_config`) for early error detection
+
 **Upcoming Focus:**
 1. Performance optimization and benchmarking (if needed)
-2. Consider optional auto-detect flag for wrapper mode suggestion (Phase 5+)
-3. Evaluate wrapper support for Python/WASM bindings based on user demand
+2. Consider optional auto-detect flag for wrapper mode suggestion
+3. Dynamic plugin loading for CLI (currently library-only)
+4. Evaluate wrapper support for Python/WASM bindings based on user demand
 
-**Last Updated:** 2025-11-01 (Phase 12 – Wrapper Phase 4 complete: Polish, metrics, and extensibility)
+**Last Updated:** 2025-11-01 (Wrapper Phase 5 complete: Plugin system, array-with-headers mode with full CLI integration, and schema-aware hooks)

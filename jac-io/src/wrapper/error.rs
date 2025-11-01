@@ -235,6 +235,75 @@ pub enum WrapperError {
     /// Underlying JAC error
     #[error("JAC error: {0}")]
     Jac(#[from] jac_format::JacError),
+
+    /// Plugin already registered with same name
+    #[error(
+        "Plugin already registered: a plugin named '{name}' is already registered.\n\
+         \n\
+         Plugin names must be unique. Either:\n\
+         1. Unregister the existing plugin first\n\
+         2. Choose a different name for your plugin"
+    )]
+    PluginAlreadyRegistered {
+        /// Name of the plugin that was already registered
+        name: String,
+    },
+
+    /// Plugin not found
+    #[error("Plugin not found: no plugin named '{name}' is registered")]
+    PluginNotFound {
+        /// Name of the plugin that was not found
+        name: String,
+    },
+
+    /// Plugin configuration invalid
+    #[error(
+        "Invalid plugin configuration for '{plugin}': {reason}\n\
+         \n\
+         Check the plugin documentation for required configuration format."
+    )]
+    InvalidPluginConfig {
+        /// Name of the plugin
+        plugin: String,
+        /// Reason why the configuration is invalid
+        reason: String,
+    },
+
+    /// Plugin execution error
+    #[error("Plugin '{plugin}' execution failed: {reason}")]
+    PluginExecutionFailed {
+        /// Name of the plugin that failed
+        plugin: String,
+        /// Error message from the plugin
+        reason: String,
+    },
+
+    /// Array header row error
+    #[error(
+        "Invalid header row: {reason}\n\
+         \n\
+         Array-with-headers wrapper requires the first element to be an array of strings.\n\
+         Example: [[\"id\", \"name\"], [1, \"Alice\"], [2, \"Bob\"]]"
+    )]
+    InvalidHeaderRow {
+        /// Reason why the header is invalid
+        reason: String,
+    },
+
+    /// Array row length mismatch
+    #[error(
+        "Row length mismatch: row {row_index} has {actual} elements, expected {expected} (from header).\n\
+         \n\
+         All rows must have the same number of elements as the header row."
+    )]
+    ArrayRowLengthMismatch {
+        /// Index of the row with wrong length
+        row_index: usize,
+        /// Actual number of elements
+        actual: usize,
+        /// Expected number of elements
+        expected: usize,
+    },
 }
 
 impl WrapperError {

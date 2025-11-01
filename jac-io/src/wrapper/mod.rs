@@ -9,6 +9,8 @@
 //! - **Pointer**: Navigate to a nested array using RFC 6901 JSON Pointers
 //! - **Sections**: Concatenate multiple named arrays from a single object
 //! - **KeyedMap**: Flatten object-of-objects into records with key injection
+//! - **ArrayWithHeaders**: Convert CSV-like arrays (first row = headers) to records
+//! - **Plugin**: Custom wrapper implementations via the plugin system
 //!
 //! # Security & Limits
 //!
@@ -23,13 +25,19 @@
 //! structure is **not preserved** and cannot be recovered from `jac unpack`.
 //! If you need to preserve the original structure, archive the source file separately.
 
+pub mod array_headers;
 pub mod error;
 pub mod map;
+pub mod plugin;
 pub mod pointer;
 pub mod sections;
 pub mod utils;
 
+pub use array_headers::ArrayHeadersStream;
 pub use error::WrapperError;
 pub use map::KeyedMapStream;
+pub use plugin::{
+    FieldHint, FieldType, SchemaHints, WrapperPlugin, WrapperPluginMetadata, WrapperPluginRegistry,
+};
 pub use pointer::PointerArrayStream;
 pub use sections::SectionsStream;

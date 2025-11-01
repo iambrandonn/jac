@@ -386,6 +386,8 @@ subprocess.run(['jq', '.data | .[]', 'input.json'], stdout=open('flattened.ndjso
 | **Pointer** | Single nested array/object | `{"data": [...]}` | RFC 6901 path navigation |
 | **Sections** | Multiple named arrays | `{"users": [...], "admins": [...]}` | Concatenation with labels |
 | **KeyedMap** | Dictionary-style objects | `{"alice": {...}, "bob": {...}}` | Key injection as field |
+| **ArrayWithHeaders** | CSV-like tabular data | `[["id", "name"], [1, "Alice"]]` | Header row to field names |
+| **Plugin** | Custom preprocessing | Any format | User-defined logic (library only) |
 
 ### How do I debug wrapper issues?
 
@@ -411,14 +413,139 @@ Debug output shows:
 
 These limits cannot be exceeded even with CLI flags or config files. Untrusted input should still be validated before processing.
 
+### Array-with-Headers Mode (CSV-like JSON)
+
+Convert array-of-arrays with header row into records:
+
+```bash
+# Input: [["id", "name"], [1, "Alice"], [2, "Bob"]]
+jac pack data.json -o output.jac --wrapper-array-headers
+
+# Output records:
+# {"id": 1, "name": "Alice"}
+# {"id": 2, "name": "Bob"}
+```
+
+**Configuration Flags:**
+- `--wrapper-array-headers` - Enable array-with-headers mode
+
+**Notes:**
+- First array element must be strings (header row)
+- All data rows must have same length as header
+- Useful for CSV-like data exported as JSON arrays
+- Entire array is buffered in memory
+
+**Example Use Cases:**
+- Spreadsheet exports to JSON
+- CSV data converted to JSON array format
+- Tabular data with explicit headers
+
+### Custom Plugin Wrappers
+
+Implement custom preprocessing logic using the plugin API:
+
+```rust
+use jac_io::{WrapperPlugin, WrapperPluginRegistry, WrapperLimits};
+use serde_json::{Map, Value};
+use std::sync::Arc;
+
+struct MyCustomWrapper;
+
+impl WrapperPlugin for MyCustomWrapper {
+    fn name(&self) -> &str {
+        "my-custom-wrapper"
+    }
+
+    fn process(
+        &self,
+        input: Box<dyn Read + Send>,
+        config: &Value,
+        limits: &WrapperLimits,
+    ) -> Result<Box<dyn Iterator<Item = Result<Map<String, Value>, WrapperError>> + Send>, WrapperError> {
+        // Custom preprocessing logic
+        todo!()
+    }
+
+    fn schema_hints(&self, config: &Value) -> Option<SchemaHints> {
+        // Optional: provide hints for encoder optimization
+        None
+    }
+}
+
+// Register plugin
+let registry = WrapperPluginRegistry::global();
+registry.register(Arc::new(MyCustomWrapper)).unwrap();
+```
+
+**Plugin Features:**
+- **Custom preprocessing**: Implement any JSON transformation logic
+- **Schema hints**: Provide field type/cardinality hints for optimization
+- **Configuration**: Plugins accept JSON config for flexibility
+- **Global registry**: Register once, use anywhere in the application
+
+**Library-only Feature:** Plugin wrappers are only available through the Rust API. CLI support for dynamically loaded plugins is planned for future releases based on demand.
+
 ### Can wrapper modes be combined?
 
 **No.** Only one wrapper mode can be active per compression request:
-- `--wrapper-pointer` conflicts with `--wrapper-sections` and `--wrapper-map`
-- `--wrapper-sections` conflicts with `--wrapper-pointer` and `--wrapper-map`
-- `--wrapper-map` conflicts with `--wrapper-pointer` and `--wrapper-sections`
+- `--wrapper-pointer` conflicts with all other wrapper modes
+- `--wrapper-sections` conflicts with all other wrapper modes
+- `--wrapper-map` conflicts with all other wrapper modes
+- `--wrapper-array-headers` conflicts with all other wrapper modes
+- `--wrapper-plugin` (library only) conflicts with all other wrapper modes
 
-This is enforced by CLI argument validation. To process complex structures, use external preprocessing or multiple passes.
+This is enforced by CLI argument validation and API design. To process complex structures, use external preprocessing or multiple passes.
+
+### How do schema hints improve compression?
+
+Schema hints allow wrappers (especially custom plugins) to provide metadata about the expected data structure:
+
+```rust
+fn schema_hints(&self, config: &Value) -> Option<SchemaHints> {
+    Some(SchemaHints {
+        fields: vec![
+            FieldHint {
+                name: "id".to_string(),
+                expected_type: Some(FieldType::Int),
+                estimated_cardinality: Some(10_000),
+                always_present: true,
+            },
+            FieldHint {
+                name: "tags".to_string(),
+                expected_type: Some(FieldType::String),
+                estimated_cardinality: Some(50),  // Low cardinality -> dictionary encoding
+                always_present: false,
+            },
+        ],
+        estimated_record_count: Some(100_000),
+        uniform_schema: true,  // All records have same structure
+    })
+}
+```
+
+**Benefits:**
+- **Better encoding decisions**: Low cardinality hints trigger dictionary encoding
+- **Memory optimization**: Estimated counts help pre-allocate buffers
+- **Uniform schema detection**: Enables more aggressive optimizations
+- **Type-aware processing**: Integer hints may enable delta encoding
+
+**Note:** Schema hints are optional and advisory. The encoder will validate actual data and fall back to auto-detection if hints are inaccurate.
+
+### When should I create a custom plugin vs preprocessing externally?
+
+**Create a plugin when:**
+- You have a recurring preprocessing pattern used across many files
+- You want integrated error handling and metrics
+- You need schema hints for optimal compression
+- The transformation is application-specific and reusable
+- You're building a library/service that processes various JSON formats
+
+**Use external preprocessing when:**
+- One-time transformation for a specific dataset
+- Complex multi-stage transformation better suited to jq/mlr
+- You need to preserve the original envelope structure
+- The transformation requires external tools or services
+- Debugging and iteration speed is more important than integration
 
 ## Performance
 

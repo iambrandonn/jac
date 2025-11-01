@@ -280,6 +280,12 @@ enum Commands {
         /// Overwrite existing field if key field already exists (default: error on collision)
         #[arg(long = "wrapper-map-overwrite-key", requires = "wrapper_map")]
         wrapper_map_overwrite_key: bool,
+        /// Enable array-with-headers wrapper (CSV-like format: first row = headers)
+        #[arg(
+            long = "wrapper-array-headers",
+            conflicts_with_all = ["wrapper_pointer", "wrapper_sections", "wrapper_map"]
+        )]
+        wrapper_array_headers: bool,
     },
     /// Decompress .jac to JSON/NDJSON
     Unpack {
@@ -406,6 +412,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             None,   // wrapper_map_pointer
             None,   // wrapper_map_key_field
             false,  // wrapper_map_overwrite_key
+            false,  // wrapper_array_headers
         )?;
         return Ok(());
     }
@@ -441,6 +448,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             wrapper_map_pointer,
             wrapper_map_key_field,
             wrapper_map_overwrite_key,
+            wrapper_array_headers,
         }) => {
             handle_pack(
                 input,
@@ -471,6 +479,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 wrapper_map_pointer,
                 wrapper_map_key_field,
                 wrapper_map_overwrite_key,
+                wrapper_array_headers,
             )?;
         }
         Some(Commands::Unpack {
@@ -551,6 +560,7 @@ fn handle_pack(
     wrapper_map_pointer: Option<String>,
     wrapper_map_key_field: Option<String>,
     wrapper_map_overwrite_key: bool,
+    wrapper_array_headers: bool,
 ) -> Result<(), Box<dyn Error>> {
     let start = Instant::now();
 
@@ -854,6 +864,18 @@ fn handle_pack(
             key_field,
             limits: wrapper_limits,
             collision_mode,
+        }
+    } else if wrapper_array_headers {
+        // Parse array-with-headers configuration
+        let wrapper_limits = WrapperLimits::default();
+
+        if debug_wrapper {
+            eprintln!("🔍 Wrapper config: ArrayWithHeaders mode");
+            eprintln!("  - Buffer limit: {} bytes", wrapper_limits.max_buffer_bytes);
+        }
+
+        WrapperConfig::ArrayWithHeaders {
+            limits: wrapper_limits,
         }
     } else {
         if debug_wrapper {
@@ -2272,6 +2294,7 @@ mod tests {
             None,  // wrapper_map_pointer
             None,  // wrapper_map_key_field
             false, // wrapper_map_overwrite_key
+            false, // wrapper_array_headers
         )
         .unwrap();
 
@@ -2324,6 +2347,7 @@ mod tests {
             None,  // wrapper_map_pointer
             None,  // wrapper_map_key_field
             false, // wrapper_map_overwrite_key
+            false, // wrapper_array_headers
         )
         .unwrap();
 
@@ -2504,6 +2528,7 @@ mod tests {
             None,   // wrapper_map_pointer
             None,   // wrapper_map_key_field
             false,  // wrapper_map_overwrite_key
+            false,  // wrapper_array_headers
         )
         .unwrap();
 
@@ -2557,6 +2582,7 @@ mod tests {
             None,  // wrapper_map_pointer
             None,  // wrapper_map_key_field
             false, // wrapper_map_overwrite_key
+            false, // wrapper_array_headers
         )
         .unwrap();
 
