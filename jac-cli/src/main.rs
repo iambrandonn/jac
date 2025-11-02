@@ -215,20 +215,20 @@ enum Commands {
         /// JSON Pointer path to array/object to extract (RFC 6901 format, e.g., /data or /api/v1/results)
         #[arg(long = "wrapper-pointer", value_name = "POINTER")]
         wrapper_pointer: Option<String>,
-        /// Maximum depth for JSON Pointer traversal (default: 3, max: 10)
+        /// Maximum depth for wrapper traversal (default: 3, max: 10)
+        /// Applies to all wrapper modes (pointer, sections, map, array-headers)
         #[arg(
-            long = "wrapper-pointer-depth",
-            value_name = "DEPTH",
-            requires = "wrapper_pointer"
+            long = "wrapper-depth",
+            value_name = "DEPTH"
         )]
-        wrapper_pointer_depth: Option<usize>,
+        wrapper_depth: Option<usize>,
         /// Buffer size limit for wrapper preprocessing (default: 16M, max: 128M)
+        /// Applies to all wrapper modes (pointer, sections, map, array-headers)
         #[arg(
-            long = "wrapper-pointer-buffer",
-            value_name = "SIZE",
-            requires = "wrapper_pointer"
+            long = "wrapper-buffer",
+            value_name = "SIZE"
         )]
-        wrapper_pointer_buffer: Option<String>,
+        wrapper_buffer: Option<String>,
         /// Section names for multi-section wrapper (e.g., users admins guests)
         #[arg(
             long = "wrapper-sections",
@@ -401,8 +401,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             false,  // allow_large_segments
             false,  // verbose_metrics
             None,   // wrapper_pointer
-            None,   // wrapper_pointer_depth
-            None,   // wrapper_pointer_buffer
+            None,   // wrapper_depth
+            None,   // wrapper_buffer
             None,   // wrapper_sections
             None,   // wrapper_section_pointer
             None,   // wrapper_section_label_field
@@ -437,8 +437,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             allow_large_segments,
             verbose_metrics,
             wrapper_pointer,
-            wrapper_pointer_depth,
-            wrapper_pointer_buffer,
+            wrapper_depth,
+            wrapper_buffer,
             wrapper_sections,
             wrapper_section_pointer,
             wrapper_section_label_field,
@@ -468,8 +468,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                 allow_large_segments,
                 verbose_metrics,
                 wrapper_pointer,
-                wrapper_pointer_depth,
-                wrapper_pointer_buffer,
+                wrapper_depth,
+                wrapper_buffer,
                 wrapper_sections,
                 wrapper_section_pointer,
                 wrapper_section_label_field,
@@ -549,8 +549,8 @@ fn handle_pack(
     allow_large_segments: bool,
     verbose_metrics: bool,
     wrapper_pointer: Option<String>,
-    wrapper_pointer_depth: Option<usize>,
-    wrapper_pointer_buffer: Option<String>,
+    wrapper_depth: Option<usize>,
+    wrapper_buffer: Option<String>,
     wrapper_sections: Option<Vec<String>>,
     wrapper_section_pointer: Option<Vec<String>>,
     wrapper_section_label_field: Option<String>,
@@ -684,83 +684,85 @@ fn handle_pack(
         eprintln!("🔍 JAC_DEBUG_WRAPPER enabled");
     }
 
-    let wrapper_config = if let Some(pointer) = wrapper_pointer {
-        let mut wrapper_limits = WrapperLimits::default();
+    // Initialize wrapper limits once for all wrapper modes
+    // (applies to pointer, sections, map, and array-headers modes)
+    let mut wrapper_limits = WrapperLimits::default();
 
-        // Apply config file defaults first
-        if let Some(depth) = config.wrapper.default_depth {
-            wrapper_limits.max_depth = depth;
-            if debug_wrapper {
-                eprintln!("🔍 Using config file default_depth={}", depth);
-            }
+    // Apply config file defaults first
+    if let Some(depth) = config.wrapper.default_depth {
+        wrapper_limits.max_depth = depth;
+        if debug_wrapper {
+            eprintln!("🔍 Using config file default_depth={}", depth);
         }
+    }
 
-        if let Some(ref buffer_str) = config.wrapper.default_buffer {
-            if let Ok(buffer_bytes) = parse_size(buffer_str) {
-                wrapper_limits.max_buffer_bytes = buffer_bytes;
-                if debug_wrapper {
-                    eprintln!("🔍 Using config file default_buffer={}", buffer_str);
-                }
-            }
-        }
-
-        // Apply environment variable overrides (higher priority than config file)
-        if wrapper_pointer_depth.is_none() {
-            if let Ok(env_depth) = std::env::var("JAC_WRAPPER_DEPTH") {
-                if let Ok(depth) = env_depth.parse::<usize>() {
-                    if debug_wrapper {
-                        eprintln!("🔍 Using JAC_WRAPPER_DEPTH={}", depth);
-                    }
-                    wrapper_limits.max_depth = depth;
-                }
-            }
-        }
-
-        if wrapper_pointer_buffer.is_none() {
-            if let Ok(env_buffer) = std::env::var("JAC_WRAPPER_BUFFER") {
-                if let Ok(buffer_bytes) = parse_size(&env_buffer) {
-                    if debug_wrapper {
-                        eprintln!("🔍 Using JAC_WRAPPER_BUFFER={}", env_buffer);
-                    }
-                    wrapper_limits.max_buffer_bytes = buffer_bytes;
-                }
-            }
-        }
-
-        // Parse depth override
-        if let Some(depth) = wrapper_pointer_depth {
-            let hard_max_depth = WrapperLimits::hard_maximums().max_depth;
-            if depth == 0 {
-                return Err("--wrapper-pointer-depth must be at least 1".into());
-            }
-            if depth > hard_max_depth {
-                return Err(format!(
-                    "--wrapper-pointer-depth {} exceeds hard maximum {} (security limit)",
-                    depth, hard_max_depth
-                )
-                .into());
-            }
-            wrapper_limits.max_depth = depth;
-        }
-
-        // Parse buffer size override
-        if let Some(buffer_str) = wrapper_pointer_buffer {
-            let buffer_bytes = parse_size(&buffer_str)?;
-            let hard_max_buffer = WrapperLimits::hard_maximums().max_buffer_bytes;
-            if buffer_bytes == 0 {
-                return Err("--wrapper-pointer-buffer must be greater than zero".into());
-            }
-            if buffer_bytes > hard_max_buffer {
-                return Err(format!(
-                    "--wrapper-pointer-buffer {} exceeds hard maximum {} (security limit)",
-                    format_size(buffer_bytes),
-                    format_size(hard_max_buffer)
-                )
-                .into());
-            }
+    if let Some(ref buffer_str) = config.wrapper.default_buffer {
+        if let Ok(buffer_bytes) = parse_size(buffer_str) {
             wrapper_limits.max_buffer_bytes = buffer_bytes;
+            if debug_wrapper {
+                eprintln!("🔍 Using config file default_buffer={}", buffer_str);
+            }
         }
+    }
 
+    // Apply environment variable overrides (higher priority than config file)
+    if wrapper_depth.is_none() {
+        if let Ok(env_depth) = std::env::var("JAC_WRAPPER_DEPTH") {
+            if let Ok(depth) = env_depth.parse::<usize>() {
+                if debug_wrapper {
+                    eprintln!("🔍 Using JAC_WRAPPER_DEPTH={}", depth);
+                }
+                wrapper_limits.max_depth = depth;
+            }
+        }
+    }
+
+    if wrapper_buffer.is_none() {
+        if let Ok(env_buffer) = std::env::var("JAC_WRAPPER_BUFFER") {
+            if let Ok(buffer_bytes) = parse_size(&env_buffer) {
+                if debug_wrapper {
+                    eprintln!("🔍 Using JAC_WRAPPER_BUFFER={}", env_buffer);
+                }
+                wrapper_limits.max_buffer_bytes = buffer_bytes;
+            }
+        }
+    }
+
+    // Parse depth override
+    if let Some(depth) = wrapper_depth {
+        let hard_max_depth = WrapperLimits::hard_maximums().max_depth;
+        if depth == 0 {
+            return Err("--wrapper-depth must be at least 1".into());
+        }
+        if depth > hard_max_depth {
+            return Err(format!(
+                "--wrapper-depth {} exceeds hard maximum {} (security limit)",
+                depth, hard_max_depth
+            )
+            .into());
+        }
+        wrapper_limits.max_depth = depth;
+    }
+
+    // Parse buffer size override
+    if let Some(buffer_str) = wrapper_buffer {
+        let buffer_bytes = parse_size(&buffer_str)?;
+        let hard_max_buffer = WrapperLimits::hard_maximums().max_buffer_bytes;
+        if buffer_bytes == 0 {
+            return Err("--wrapper-buffer must be greater than zero".into());
+        }
+        if buffer_bytes > hard_max_buffer {
+            return Err(format!(
+                "--wrapper-buffer {} exceeds hard maximum {} (security limit)",
+                format_size(buffer_bytes),
+                format_size(hard_max_buffer)
+            )
+            .into());
+        }
+        wrapper_limits.max_buffer_bytes = buffer_bytes;
+    }
+
+    let wrapper_config = if let Some(pointer) = wrapper_pointer {
         if debug_wrapper {
             eprintln!("🔍 Wrapper config: Pointer mode");
             eprintln!("  - Path: {}", pointer);
@@ -778,7 +780,6 @@ fn handle_pack(
         }
     } else if let Some(section_names) = wrapper_sections {
         // Parse sections configuration
-        let wrapper_limits = WrapperLimits::default();
 
         // Parse custom pointers for sections
         let mut custom_pointers: HashMap<String, String> = HashMap::new();
@@ -842,7 +843,6 @@ fn handle_pack(
     } else if wrapper_map {
         // Parse keyed map configuration
         use jac_io::KeyCollisionMode;
-        let wrapper_limits = WrapperLimits::default();
 
         let pointer = wrapper_map_pointer.unwrap_or_default(); // Default to root (empty string)
         let key_field = wrapper_map_key_field.unwrap_or_else(|| "_key".to_string());
@@ -867,7 +867,6 @@ fn handle_pack(
         }
     } else if wrapper_array_headers {
         // Parse array-with-headers configuration
-        let wrapper_limits = WrapperLimits::default();
 
         if debug_wrapper {
             eprintln!("🔍 Wrapper config: ArrayWithHeaders mode");
@@ -2283,8 +2282,8 @@ mod tests {
             false,
             false, // verbose_metrics
             None,  // wrapper_pointer
-            None,  // wrapper_pointer_depth
-            None,  // wrapper_pointer_buffer
+            None,  // wrapper_depth
+            None,  // wrapper_buffer
             None,  // wrapper_sections
             None,  // wrapper_section_pointer
             None,  // wrapper_section_label_field
@@ -2336,8 +2335,8 @@ mod tests {
             false,
             false, // verbose_metrics
             None,  // wrapper_pointer
-            None,  // wrapper_pointer_depth
-            None,  // wrapper_pointer_buffer
+            None,  // wrapper_depth
+            None,  // wrapper_buffer
             None,  // wrapper_sections
             None,  // wrapper_section_pointer
             None,  // wrapper_section_label_field
@@ -2517,8 +2516,8 @@ mod tests {
             false,  // allow_large_segments
             false,  // verbose_metrics
             None,   // wrapper_pointer
-            None,   // wrapper_pointer_depth
-            None,   // wrapper_pointer_buffer
+            None,   // wrapper_depth
+            None,   // wrapper_buffer
             None,   // wrapper_sections
             None,   // wrapper_section_pointer
             None,   // wrapper_section_label_field
@@ -2571,8 +2570,8 @@ mod tests {
             false,
             false, // verbose_metrics
             None,  // wrapper_pointer
-            None,  // wrapper_pointer_depth
-            None,  // wrapper_pointer_buffer
+            None,  // wrapper_depth
+            None,  // wrapper_buffer
             None,  // wrapper_sections
             None,  // wrapper_section_pointer
             None,  // wrapper_section_label_field
